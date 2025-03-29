@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
-Script to process assets containing a specific person and align faces.
+This tool helps create selfie timelapses from your Immich instance.
+It uses the powerful machine learning features of Immich to gather all the photographs where a particular individual
+appears, retrieves the bounding box metadata, and automatically crops and aligns the photos.
+Some manual sorting is still required to achieve the best effect in the video.
+I personally found that a video frame rate of 15 fps looks pretty good.
+
+Script by Arnaud Cayrol
 """
 
 import os
@@ -214,7 +220,7 @@ def main():
     parser.add_argument("--resize-height", type=int, default=512, help="Output image height")
     parser.add_argument("--min-face-width", type=int, default=128, help="Minimum face width")
     parser.add_argument("--min-face-height", type=int, default=128, help="Minimum face height")
-    parser.add_argument("--pose-threshold", type=float, default=25, help="Threshold for acceptable head pose")
+    parser.add_argument("--pose-threshold", type=float, default=25, help="Threshold for acceptable head orientation towards camera")
     parser.add_argument("--desired-left-eye", type=float, nargs=2, default=[0.35, 0.45],
                         help="Desired left eye position as fraction (x y) in the output image")
     parser.add_argument("--max-workers", type=int, default=4, help="Maximum number of parallel workers")
