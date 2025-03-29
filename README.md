@@ -3,7 +3,14 @@
 This tool helps create selfie timelapses from your Immich instance.  
 It uses the powerful machine learning features of Immich to gather all the photographs where a particular individual appears, retrieves the bounding box metadata, and automatically crops and aligns the photos.
 
-![example.jpg](resources%2Fexample.jpg)
+<p align="center">
+  <img src="resources/example.jpg" alt="Example Image">
+</p>
+
+<p align="center">
+  <img src="resources/example_gif.gif" alt="Example GIF">
+</p>
+
 
 ## Features
 
