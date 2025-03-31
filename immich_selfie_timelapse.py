@@ -9,6 +9,7 @@ I personally found that a video frame rate of 15 fps looks pretty good.
 Script by Arnaud Cayrol
 """
 
+
 import os
 import io
 import requests
@@ -21,6 +22,27 @@ import numpy as np
 import cv2
 import dlib
 from tqdm import tqdm
+import logging
+
+# Custom logging handler that works with tqdm
+class TqdmLoggingHandler(logging.Handler):
+    def __init__(self, level=logging.NOTSET):
+        super().__init__(level)
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            tqdm.write(msg)
+        except Exception:
+            self.handleError(record)
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+tqdm_handler = TqdmLoggingHandler()
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
+tqdm_handler.setFormatter(formatter)
+logger.addHandler(tqdm_handler)
 
 
 def get_assets_with_person(api_key, base_url, person_id):
@@ -44,13 +66,13 @@ def get_assets_with_person(api_key, base_url, person_id):
     while payload["page"] is not None:
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code != 200:
-            print(f"Error fetching page {payload['page']}: {response.status_code} - {response.text}")
+            logger.info(f"Error fetching page {payload['page']}: {response.status_code} - {response.text}")
             break
         data = response.json()
         if not data:
             break
         all_assets.extend(data['assets']['items'])
-        print(f"Fetched page {payload['page']} with {len(data['assets']['items'])} assets")
+        logger.info(f"Fetched page {payload['page']} with {len(data['assets']['items'])} assets")
         payload["page"] = data['assets'].get('nextPage')
     return all_assets
 
@@ -127,16 +149,24 @@ def align_face(image, predictor, detector, desired_face_width, desired_face_heig
                desired_left_eye, pose_threshold):
     image_np = np.array(image)
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-    rects = detector(gray, 2)
-    if not rects:
-        print("No face detected in the crop. Discarding.")
+
+    # Detect faces using the provided detector.
+    detections = detector(gray)
+    if not detections:
+        logger.info("No face detected in the crop. Discarding.")
         return None
-    rect = rects[0]
+
+    # If using CNN detector, extract the rectangle from the detection.
+    if hasattr(detections[0], "rect"):
+        rect = detections[0].rect
+    else:
+        rect = detections[0]
+
     shape = predictor(gray, rect)
     img_size = (image_np.shape[1], image_np.shape[0])
     pitch, yaw, roll = get_head_pose(shape, img_size)
     if abs(abs(pitch) - 180) > pose_threshold or abs(yaw) > pose_threshold:
-        print(f"Face not frontal enough: pitch={pitch:.2f}, yaw={yaw:.2f}, roll={roll:.2f}. Discarding.")
+        logger.info(f"Face not frontal enough: pitch={pitch:.2f}, yaw={yaw:.2f}, roll={roll:.2f}. Discarding.")
         return None
     shape_np = np.array([(shape.part(i).x, shape.part(i).y) for i in range(68)], dtype="int")
     left_eye_center = shape_np[36:42].mean(axis=0).astype("int")
@@ -169,10 +199,12 @@ def align_face(image, predictor, detector, desired_face_width, desired_face_heig
 
 def process_asset_worker(asset, api_key, base_url, person_id, output_folder,
                          padding_percent, min_face_width, min_face_height,
-                         resize_width, resize_height, pose_threshold, desired_left_eye):
-    local_detector = dlib.get_frontal_face_detector()
-    predictor_path = "shape_predictor_68_face_landmarks.dat"
-    local_predictor = dlib.shape_predictor(predictor_path)
+                         resize_width, resize_height, pose_threshold, desired_left_eye,
+                         cnn_model_path, predictor_model_path):
+
+    detector = dlib.cnn_face_detection_model_v1(cnn_model_path)
+    # Use predictor_model_path from command line instead of hard-coded path.
+    local_predictor = dlib.shape_predictor(predictor_model_path)
     try:
         asset_id = asset['id']
         timestamp = format_timestamp(asset['fileCreatedAt'])
@@ -181,23 +213,23 @@ def process_asset_worker(asset, api_key, base_url, person_id, output_folder,
         image = ImageOps.exif_transpose(image)
         image = image.convert("RGB")
     except Exception as e:
-        print(f"Error processing asset {asset.get('id')}: {e}")
+        logger.info(f"Error processing asset {asset.get('id')}: {e}")
         return None
     matching_person = next((p for p in asset.get('people', []) if p.get('id') == person_id), None)
     if not matching_person:
-        print("Subject not in image.")
+        logger.info("Subject not in image.")
         return None
     faces = matching_person.get('faces', [])
     if not faces:
-        print("No face data available.")
+        logger.info("No face data available.")
         return None
     face_data = faces[0]
     cropped_face = crop_face_from_metadata(image, face_data, padding_percent)
     face_width, face_height = cropped_face.size
     if face_width < min_face_width or face_height < min_face_height:
-        print(f"Face resolution too low ({face_width}x{face_height}).")
+        logger.info(f"Face resolution too low ({face_width}x{face_height}).")
         return None
-    aligned_face = align_face(cropped_face, local_predictor, local_detector,
+    aligned_face = align_face(cropped_face, local_predictor, detector,
                               desired_face_width=resize_width,
                               desired_face_height=resize_height,
                               desired_left_eye=desired_left_eye,
@@ -207,6 +239,10 @@ def process_asset_worker(asset, api_key, base_url, person_id, output_folder,
     filename = os.path.join(output_folder, f"{timestamp}.jpg")
     aligned_face.save(filename)
     return filename
+
+
+def process_asset_wrapper(asset, process_args):
+    return process_asset_worker(asset, *process_args)
 
 
 def main():
@@ -224,26 +260,29 @@ def main():
     parser.add_argument("--desired-left-eye", type=float, nargs=2, default=[0.35, 0.45],
                         help="Desired left eye position as fraction (x y) in the output image")
     parser.add_argument("--max-workers", type=int, default=4, help="Maximum number of parallel workers")
+    parser.add_argument("--face-detect-model-path", default="mmod_human_face_detector.dat", help="Path to the CNN face detector model file")
+    parser.add_argument("--landmark-model-path", default="shape_predictor_68_face_landmarks.dat", help="Path to the face landmark predictor model file")
     args = parser.parse_args()
 
     os.makedirs(args.output_folder, exist_ok=True)
 
     assets = get_assets_with_person(args.api_key, args.base_url, args.person_id)
-    print(f"Found {len(assets)} assets containing the person.")
+    logger.info(f"Found {len(assets)} assets containing the person.")
 
     process_args = (
         args.api_key, args.base_url, args.person_id, args.output_folder,
         args.padding_percent, args.min_face_width, args.min_face_height,
-        args.resize_width, args.resize_height, args.pose_threshold, tuple(args.desired_left_eye)
+        args.resize_width, args.resize_height, args.pose_threshold, tuple(args.desired_left_eye),
+        args.face_detect_model_path, args.landmark_model_path
     )
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=args.max_workers) as executor:
         results = list(tqdm(
-            executor.map(lambda asset: process_asset_worker(asset, *process_args), assets),
+            executor.map(process_asset_wrapper, assets, [process_args] * len(assets)),
             total=len(assets)
         ))
     processed_files = [r for r in results if r is not None]
-    print(f"Finished processing. {len(processed_files)} images saved.")
+    logger.info(f"Finished processing. {len(processed_files)} images saved.")
 
 
 if __name__ == "__main__":
