@@ -32,12 +32,21 @@ It uses the powerful machine learning features of Immich to gather all the photo
    - When you click on a specific person, check the URL in your browser.
    - The person ID (usually a UUID) is part of the URL. Copy this ID for use in the script.
 
-3. **Download the Face Landmark Data:**
+3. **Install Dlib python library**
+   - Download the wheel for your python version here: https://github.com/z-mahmud22/Dlib_Windows_Python3.x
+   - Install it with `python -m pip install dlib-19.24.99-cp312-cp312-win_amd64.whl`
+
+5. **Download the face detection CNN model**
+   - Download mmod_human_face_detector.dat from:
+     https://github.com/justadudewhohacks/face-recognition.js-models/blob/master/models/mmod_human_face_detector.dat
+   - Place the file in the same folder as the script, or update the predictor path in the script accordingly.
+
+4. **Download the Face Landmark Data:**
    - Download the 68-point face landmark model from:
      https://github.com/italojs/facial-landmarks-recognition/blob/master/shape_predictor_68_face_landmarks.dat
    - Place the file in the same folder as the script, or update the predictor path in the script accordingly.
 
-4. **Install the required python modules from requirements.txt**
+5. **Install the required python modules from requirements.txt**
    - Note that an old version of Numpy is required for compatibility with dlib.
 
 ## Usage
@@ -62,11 +71,13 @@ Run the script from the command line with the required arguments. For example:
 - **--pose-threshold**: Threshold for acceptable head pose.
 - **--desired-left-eye**: Desired left eye position as a fraction (x y) in the output image (default: 0.35 0.45).
 - **--max-workers**: Number of parallel processes to use (default: 4).
+- **--face-detect-model-paths**: Path to the CNN face detector model file (default: mmod_human_face_detector.dat).
+- **--landmark-model-path**: Path to the face landmark predictor model file (default: shape_predictor_68_face_landmarks.dat).
 
 ## Additional Notes
 
 - Ensure that the `shape_predictor_68_face_landmarks.dat` file is accessible by the script. Update the path if necessary.
-- The tool may require some manual sorting of the output images to achieve the best video effect. In particular I remove images with poor lighting.
+- The tool may require some manual sorting of the output images to achieve the best video effect. In particular, the face landmark detection is not super robust.
 - I find that a video framerate of 15 fps gives good results.
 - Contributions and improvements are welcome.
 
