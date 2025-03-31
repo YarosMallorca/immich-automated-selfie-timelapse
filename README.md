@@ -78,6 +78,7 @@ Run the script from the command line with the required arguments. For example:
 
 - Ensure that the `shape_predictor_68_face_landmarks.dat` file is accessible by the script. Update the path if necessary.
 - The tool may require some manual sorting of the output images to achieve the best video effect. In particular, the face landmark detection is not super robust.
+- Execution speed: on my i5 11400, it can process about 2 image per second.
 - I find that a video framerate of 15 fps gives good results.
 - Contributions and improvements are welcome.
 
