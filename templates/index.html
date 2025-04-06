@@ -31,23 +31,14 @@
             color: #555;
         }
         input[type="text"],
-        input[type="number"] {
+        input[type="number"],
+        select {
             width: calc(100% - 20px);
             padding: 8px 10px;
             margin-top: 4px;
             border: 1px solid #ccc;
             border-radius: 4px;
             font-size: 14px;
-        }
-        details {
-            background: #eef;
-            padding: 10px;
-            margin: 20px 0;
-            border-radius: 4px;
-        }
-        summary {
-            font-weight: bold;
-            cursor: pointer;
         }
         button {
             background: #28a745;
@@ -103,21 +94,14 @@
                 Pose Threshold:
                 <input type="number" step="0.1" name="pose_threshold" value="{{ request.form.pose_threshold or 25 }}">
             </label>
-            <details>
-                <summary>Advanced Options</summary>
-                <label>
-                    Desired Left Eye X:
-                    <input type="number" step="0.01" name="desired_left_eye_x" value="{{ request.form.desired_left_eye_x or 0.35 }}">
-                </label>
-                <label>
-                    Desired Left Eye Y:
-                    <input type="number" step="0.01" name="desired_left_eye_y" value="{{ request.form.desired_left_eye_y or 0.45 }}">
-                </label>
-                <label>
-                    Max Workers:
-                    <input type="number" name="max_workers" value="{{ request.form.max_workers or 4 }}">
-                </label>
-            </details>
+            <label>
+                Max Workers:
+                <select name="max_workers">
+                    {% for i in max_workers_options %}
+                        <option value="{{ i }}" {% if request.form.max_workers|default('1')|int == i %}selected{% endif %}>{{ i }}</option>
+                    {% endfor %}
+                </select>
+            </label>
             <button type="submit">Generate Timelapse</button>
         </form>
         {% if result %}

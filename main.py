@@ -1,4 +1,5 @@
 import os
+import multiprocessing
 from flask import Flask, request, render_template
 from timelapse import process_faces
 
@@ -9,28 +10,33 @@ API_KEY = os.environ.get("IMMICH_API_KEY", "")
 BASE_URL = os.environ.get("IMMICH_BASE_URL", "")
 OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "output")
 
-# model paths
+# Model paths
 FACE_DETECT_MODEL = "mmod_human_face_detector.dat"
 LANDMARK_MODEL = "shape_predictor_68_face_landmarks.dat"
 
+LEFT_EYE_POS = (0.35, 0.45)
+AVAILABLE_CORES = multiprocessing.cpu_count()
 
 @app.route("/", methods=["GET", "POST"])
 def index():
     result = None
     error = None
+    # Create max_workers_options as a list of numbers from 1 to AVAILABLE_CORES
+    max_workers_options = list(range(1, AVAILABLE_CORES + 1))
     if request.method == "POST":
         try:
+            # Read critical parameters from environment variables
             api_key = API_KEY
             base_url = BASE_URL
             output_folder = OUTPUT_FOLDER
+
+            # Get user input from the form
             person_id = request.form["person_id"]
             padding_percent = float(request.form.get("padding_percent", 0.3))
             resize_size = int(request.form.get("resize_size", 512))
             face_resolution_threshold = int(request.form.get("face_resolution_threshold", 128))
             pose_threshold = float(request.form.get("pose_threshold", 25))
-            desired_left_eye_x = float(request.form.get("desired_left_eye_x", 0.35))
-            desired_left_eye_y = float(request.form.get("desired_left_eye_y", 0.45))
-            max_workers = int(request.form.get("max_workers", 4))
+            max_workers = int(request.form.get("max_workers", 1))  # default is 1
 
             processed_files = process_faces(
                 api_key=api_key,
@@ -43,7 +49,7 @@ def index():
                 min_face_width=face_resolution_threshold,
                 min_face_height=face_resolution_threshold,
                 pose_threshold=pose_threshold,
-                desired_left_eye=(desired_left_eye_x, desired_left_eye_y),
+                desired_left_eye=LEFT_EYE_POS,
                 max_workers=max_workers,
                 face_detect_model_path=FACE_DETECT_MODEL,
                 landmark_model_path=LANDMARK_MODEL
@@ -51,8 +57,7 @@ def index():
             result = f"Finished processing. {len(processed_files)} images saved in '{output_folder}'."
         except Exception as e:
             error = f"Error processing request: {e}"
-    return render_template("index.html", result=result, error=error)
-
+    return render_template("index.html", result=result, error=error, max_workers_options=max_workers_options)
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
