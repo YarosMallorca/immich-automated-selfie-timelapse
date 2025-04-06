@@ -1,14 +1,4 @@
-#!/usr/bin/env python3
-"""
-This tool helps create selfie timelapses from your Immich instance.
-It uses the powerful machine learning features of Immich to gather all the photographs where a particular individual
-appears, retrieves the bounding box metadata, and automatically crops and aligns the photos.
-Some manual sorting is still required to achieve the best effect in the video.
-I personally found that a video frame rate of 15 fps looks pretty good.
-
-Script by Arnaud Cayrol
-"""
-
+# timelapse.py
 
 import os
 import io
@@ -36,7 +26,6 @@ class TqdmLoggingHandler(logging.Handler):
         except Exception:
             self.handleError(record)
 
-# Configure logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 tqdm_handler = TqdmLoggingHandler()
@@ -150,13 +139,11 @@ def align_face(image, predictor, detector, desired_face_width, desired_face_heig
     image_np = np.array(image)
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
 
-    # Detect faces using the provided detector.
     detections = detector(gray)
     if not detections:
         logger.info("No face detected in the crop. Discarding.")
         return None
 
-    # If using CNN detector, extract the rectangle from the detection.
     if hasattr(detections[0], "rect"):
         rect = detections[0].rect
     else:
@@ -203,7 +190,6 @@ def process_asset_worker(asset, api_key, base_url, person_id, output_folder,
                          cnn_model_path, predictor_model_path):
 
     detector = dlib.cnn_face_detection_model_v1(cnn_model_path)
-    # Use predictor_model_path from command line instead of hard-coded path.
     local_predictor = dlib.shape_predictor(predictor_model_path)
     try:
         asset_id = asset['id']
@@ -245,45 +231,39 @@ def process_asset_wrapper(asset, process_args):
     return process_asset_worker(asset, *process_args)
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Process and align faces from assets.")
-    parser.add_argument("--api-key", required=True, help="API key for authentication")
-    parser.add_argument("--base-url", required=True, help="Base URL for the API")
-    parser.add_argument("--person-id", required=True, help="ID of the person to search for")
-    parser.add_argument("--output-folder", default="output", help="Folder to save output images")
-    parser.add_argument("--padding-percent", type=float, default=0.3, help="Padding percentage for face crop")
-    parser.add_argument("--resize-width", type=int, default=512, help="Output image width")
-    parser.add_argument("--resize-height", type=int, default=512, help="Output image height")
-    parser.add_argument("--min-face-width", type=int, default=128, help="Minimum face width")
-    parser.add_argument("--min-face-height", type=int, default=128, help="Minimum face height")
-    parser.add_argument("--pose-threshold", type=float, default=25, help="Threshold for acceptable head orientation towards camera")
-    parser.add_argument("--desired-left-eye", type=float, nargs=2, default=[0.35, 0.45],
-                        help="Desired left eye position as fraction (x y) in the output image")
-    parser.add_argument("--max-workers", type=int, default=4, help="Maximum number of parallel workers")
-    parser.add_argument("--face-detect-model-path", default="mmod_human_face_detector.dat", help="Path to the CNN face detector model file")
-    parser.add_argument("--landmark-model-path", default="shape_predictor_68_face_landmarks.dat", help="Path to the face landmark predictor model file")
-    args = parser.parse_args()
+def process_faces(
+    api_key,
+    base_url,
+    person_id,
+    output_folder="output",
+    padding_percent=0.3,
+    resize_width=512,
+    resize_height=512,
+    min_face_width=128,
+    min_face_height=128,
+    pose_threshold=25,
+    desired_left_eye=(0.35, 0.45),
+    max_workers=4,
+    face_detect_model_path="mmod_human_face_detector.dat",
+    landmark_model_path="shape_predictor_68_face_landmarks.dat"
+):
+    os.makedirs(output_folder, exist_ok=True)
 
-    os.makedirs(args.output_folder, exist_ok=True)
-
-    assets = get_assets_with_person(args.api_key, args.base_url, args.person_id)
+    assets = get_assets_with_person(api_key, base_url, person_id)
     logger.info(f"Found {len(assets)} assets containing the person.")
 
     process_args = (
-        args.api_key, args.base_url, args.person_id, args.output_folder,
-        args.padding_percent, args.min_face_width, args.min_face_height,
-        args.resize_width, args.resize_height, args.pose_threshold, tuple(args.desired_left_eye),
-        args.face_detect_model_path, args.landmark_model_path
+        api_key, base_url, person_id, output_folder,
+        padding_percent, min_face_width, min_face_height,
+        resize_width, resize_height, pose_threshold, desired_left_eye,
+        face_detect_model_path, landmark_model_path
     )
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=args.max_workers) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
         results = list(tqdm(
             executor.map(process_asset_wrapper, assets, [process_args] * len(assets)),
             total=len(assets)
         ))
     processed_files = [r for r in results if r is not None]
     logger.info(f"Finished processing. {len(processed_files)} images saved.")
-
-
-if __name__ == "__main__":
-    main()
+    return processed_files

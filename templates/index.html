@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Immich Selfie Timelapse Tool</title>
+</head>
+<body>
+    <h1>Create a Selfie Timelapse</h1>
+    <form method="post">
+        <label>API Key: <input type="text" name="api_key" required></label><br><br>
+        <label>Base URL: <input type="text" name="base_url" required></label><br><br>
+        <label>Person ID: <input type="text" name="person_id" required></label><br><br>
+        <label>Output Folder: <input type="text" name="output_folder" value="output"></label><br><br>
+        <label>Padding Percent: <input type="number" step="0.01" name="padding_percent" value="0.3"></label><br><br>
+        <label>Resize Width: <input type="number" name="resize_width" value="512"></label><br><br>
+        <label>Resize Height: <input type="number" name="resize_height" value="512"></label><br><br>
+        <label>Min Face Width: <input type="number" name="min_face_width" value="128"></label><br><br>
+        <label>Min Face Height: <input type="number" name="min_face_height" value="128"></label><br><br>
+        <label>Pose Threshold: <input type="number" step="0.1" name="pose_threshold" value="25"></label><br><br>
+        <label>Desired Left Eye X: <input type="number" step="0.01" name="desired_left_eye_x" value="0.35"></label><br><br>
+        <label>Desired Left Eye Y: <input type="number" step="0.01" name="desired_left_eye_y" value="0.45"></label><br><br>
+        <label>Max Workers: <input type="number" name="max_workers" value="4"></label><br><br>
+        <label>Face Detect Model Path: <input type="text" name="face_detect_model_path" value="mmod_human_face_detector.dat"></label><br><br>
+        <label>Landmark Model Path: <input type="text" name="landmark_model_path" value="shape_predictor_68_face_landmarks.dat"></label><br><br>
+        <button type="submit">Generate Timelapse</button>
+    </form>
+    {% if result %}
+        <h2>{{ result }}</h2>
+    {% endif %}
+</body>
+</html>
