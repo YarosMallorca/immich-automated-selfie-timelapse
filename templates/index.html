@@ -65,6 +65,14 @@
         .result {
             color: #080;
         }
+        #progressContainer {
+            margin-top: 20px;
+            text-align: center;
+        }
+        progress {
+            width: 100%;
+            height: 25px;
+        }
     </style>
 </head>
 <body>
@@ -107,6 +115,30 @@
         {% if result %}
             <p class="result">{{ result }}</p>
         {% endif %}
+        <!-- Progress Bar -->
+        <div id="progressContainer">
+            <progress id="progressBar" value="0" max="100"></progress>
+            <p id="progressText">0%</p>
+        </div>
     </div>
+    <script>
+        function fetchProgress() {
+            fetch('/progress')
+                .then(response => response.json())
+                .then(data => {
+                    const progressBar = document.getElementById("progressBar");
+                    const progressText = document.getElementById("progressText");
+                    if (data.total > 0) {
+                        progressBar.max = data.total;
+                        progressBar.value = data.completed;
+                        const percent = Math.floor((data.completed / data.total) * 100);
+                        progressText.textContent = percent + "%";
+                    }
+                })
+                .catch(err => console.error('Error fetching progress:', err));
+        }
+        // Poll every 1 second
+        setInterval(fetchProgress, 1000);
+    </script>
 </body>
 </html>

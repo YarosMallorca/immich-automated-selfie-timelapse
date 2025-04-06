@@ -1,5 +1,4 @@
 # timelapse.py
-
 import os
 import io
 import requests
@@ -16,7 +15,6 @@ import logging
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
         super().__init__(level)
-
     def emit(self, record):
         try:
             msg = self.format(record)
@@ -30,7 +28,6 @@ tqdm_handler = TqdmLoggingHandler()
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datefmt='%H:%M:%S')
 tqdm_handler.setFormatter(formatter)
 logger.addHandler(tqdm_handler)
-
 
 def get_assets_with_person(api_key, base_url, person_id):
     headers = {
@@ -63,18 +60,15 @@ def get_assets_with_person(api_key, base_url, person_id):
         payload["page"] = data['assets'].get('nextPage')
     return all_assets
 
-
 def download_asset(api_key, base_url, asset_id):
     headers = {'x-api-key': api_key}
     response = requests.get(f'{base_url}/assets/{asset_id}/original', headers=headers)
     response.raise_for_status()
     return response.content
 
-
 def format_timestamp(timestamp):
     dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     return dt.strftime("%Y%m%d_%H%M%S")
-
 
 def crop_face_from_metadata(image, face_data, padding_percent):
     face_img_width = face_data.get("imageWidth")
@@ -94,7 +88,6 @@ def crop_face_from_metadata(image, face_data, padding_percent):
     new_x2 = min(x2 + padding, img_width)
     new_y2 = min(y2 + padding, img_height)
     return image.crop((new_x1, new_y1, new_x2, new_y2))
-
 
 def get_head_pose(shape, img_size):
     image_points = np.array([
@@ -131,22 +124,18 @@ def get_head_pose(shape, img_size):
     pitch, yaw, roll = [float(angle) for angle in eulerAngles]
     return pitch, yaw, roll
 
-
 def align_face(image, predictor, detector, desired_face_width, desired_face_height,
                desired_left_eye, pose_threshold):
     image_np = np.array(image)
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-
     detections = detector(gray)
     if not detections:
         logger.info("No face detected in the crop. Discarding.")
         return None
-
     if hasattr(detections[0], "rect"):
         rect = detections[0].rect
     else:
         rect = detections[0]
-
     shape = predictor(gray, rect)
     img_size = (image_np.shape[1], image_np.shape[0])
     pitch, yaw, roll = get_head_pose(shape, img_size)
@@ -181,12 +170,10 @@ def align_face(image, predictor, detector, desired_face_width, desired_face_heig
     )
     return Image.fromarray(aligned_face_np)
 
-
 def process_asset_worker(asset, api_key, base_url, person_id, output_folder,
                          padding_percent, min_face_width, min_face_height,
                          resize_width, resize_height, pose_threshold, desired_left_eye,
                          cnn_model_path, predictor_model_path):
-
     detector = dlib.cnn_face_detection_model_v1(cnn_model_path)
     local_predictor = dlib.shape_predictor(predictor_model_path)
     try:
@@ -224,10 +211,8 @@ def process_asset_worker(asset, api_key, base_url, person_id, output_folder,
     aligned_face.save(filename)
     return filename
 
-
 def process_asset_wrapper(asset, process_args):
     return process_asset_worker(asset, *process_args)
-
 
 def process_faces(
     api_key,
@@ -243,25 +228,27 @@ def process_faces(
     desired_left_eye=(0.35, 0.45),
     max_workers=1,
     face_detect_model_path="mmod_human_face_detector.dat",
-    landmark_model_path="shape_predictor_68_face_landmarks.dat"
+    landmark_model_path="shape_predictor_68_face_landmarks.dat",
+    progress_callback=None  # New optional parameter
 ):
     os.makedirs(output_folder, exist_ok=True)
-
     assets = get_assets_with_person(api_key, base_url, person_id)
     logger.info(f"Found {len(assets)} assets containing the person.")
-
+    total_assets = len(assets)
+    if progress_callback:
+        progress_callback(0, total_assets)
     process_args = (
         api_key, base_url, person_id, output_folder,
         padding_percent, min_face_width, min_face_height,
         resize_width, resize_height, pose_threshold, desired_left_eye,
         face_detect_model_path, landmark_model_path
     )
-
+    results = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-        results = list(tqdm(
-            executor.map(process_asset_wrapper, assets, [process_args] * len(assets)),
-            total=len(assets)
-        ))
+        for result in tqdm(executor.map(process_asset_wrapper, assets, [process_args]*total_assets), total=total_assets):
+            results.append(result)
+            if progress_callback:
+                progress_callback(len(results), total_assets)
     processed_files = [r for r in results if r is not None]
     logger.info(f"Finished processing. {len(processed_files)} images saved.")
     return processed_files

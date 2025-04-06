@@ -1,6 +1,7 @@
 import os
 import multiprocessing
-from flask import Flask, request, render_template
+import threading
+from flask import Flask, request, render_template, jsonify
 from timelapse import process_faces
 
 app = Flask(__name__)
@@ -17,43 +18,67 @@ LANDMARK_MODEL = "shape_predictor_68_face_landmarks.dat"
 LEFT_EYE_POS = (0.35, 0.45)
 AVAILABLE_CORES = multiprocessing.cpu_count()
 
+# Global progress dictionary – only one job at a time is assumed here
+progress_info = {"completed": 0, "total": 0, "status": "idle"}
+
+def update_progress(current, total):
+    progress_info["completed"] = current
+    progress_info["total"] = total
+    progress_info["status"] = "running" if current < total else "done"
+
+def background_process(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold, max_workers):
+    try:
+        progress_info["status"] = "running"
+        process_faces(
+            api_key=API_KEY,
+            base_url=BASE_URL,
+            person_id=person_id,
+            output_folder=OUTPUT_FOLDER,
+            padding_percent=padding_percent,
+            resize_width=resize_size,
+            resize_height=resize_size,
+            min_face_width=face_resolution_threshold,
+            min_face_height=face_resolution_threshold,
+            pose_threshold=pose_threshold,
+            desired_left_eye=LEFT_EYE_POS,
+            max_workers=max_workers,
+            face_detect_model_path=FACE_DETECT_MODEL,
+            landmark_model_path=LANDMARK_MODEL,
+            progress_callback=update_progress
+        )
+    except Exception as e:
+        progress_info["status"] = f"error: {e}"
+    else:
+        progress_info["status"] = "done"
+
+@app.route("/progress")
+def progress():
+    return jsonify(progress_info)
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     result = None
     error = None
-    # Create max_workers_options as a list of numbers from 1 to AVAILABLE_CORES
+    # Create max_workers_options as a list from 1 to AVAILABLE_CORES
     max_workers_options = list(range(1, AVAILABLE_CORES + 1))
     if request.method == "POST":
         try:
-            api_key = API_KEY
-            base_url = BASE_URL
-            output_folder = OUTPUT_FOLDER
-
-            # Get user input from the form
             person_id = request.form["person_id"]
             padding_percent = float(request.form.get("padding_percent", 30)) / 100
             resize_size = int(request.form.get("resize_size", 512))
             face_resolution_threshold = int(request.form.get("face_resolution_threshold", 128))
             pose_threshold = float(request.form.get("pose_threshold", 25))
             max_workers = int(request.form.get("max_workers", 1))  # default is 1
-
-            processed_files = process_faces(
-                api_key=api_key,
-                base_url=base_url,
-                person_id=person_id,
-                output_folder=output_folder,
-                padding_percent=padding_percent,
-                resize_width=resize_size,
-                resize_height=resize_size,
-                min_face_width=face_resolution_threshold,
-                min_face_height=face_resolution_threshold,
-                pose_threshold=pose_threshold,
-                desired_left_eye=LEFT_EYE_POS,
-                max_workers=max_workers,
-                face_detect_model_path=FACE_DETECT_MODEL,
-                landmark_model_path=LANDMARK_MODEL
-            )
-            result = f"Finished processing. {len(processed_files)} images saved in '{output_folder}'."
+            # Reset progress info before starting
+            progress_info["completed"] = 0
+            progress_info["total"] = 0
+            progress_info["status"] = "idle"
+            # Start the processing in a background thread
+            threading.Thread(
+                target=background_process,
+                args=(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold, max_workers)
+            ).start()
+            result = "Processing started. Please wait and watch the progress bar below."
         except Exception as e:
             error = f"Error processing request: {e}"
     return render_template("index.html", result=result, error=error, max_workers_options=max_workers_options)
