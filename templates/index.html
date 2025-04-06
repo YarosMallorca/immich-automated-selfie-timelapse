@@ -1,61 +1,128 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>Immich Selfie Timelapse Tool</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 700px;
+            margin: 50px auto;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            padding: 30px;
+        }
+        h1 {
+            text-align: center;
+            color: #333;
+        }
+        form {
+            margin-top: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 10px;
+            color: #555;
+        }
+        input[type="text"],
+        input[type="number"] {
+            width: calc(100% - 20px);
+            padding: 8px 10px;
+            margin-top: 4px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        details {
+            background: #eef;
+            padding: 10px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        summary {
+            font-weight: bold;
+            cursor: pointer;
+        }
+        button {
+            background: #28a745;
+            color: #fff;
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: block;
+            margin: 20px auto 0;
+        }
+        button:hover {
+            background: #218838;
+        }
+        .result, .error {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 16px;
+        }
+        .error {
+            color: #c00;
+        }
+        .result {
+            color: #080;
+        }
+    </style>
 </head>
 <body>
-    <h1>Create a Selfie Timelapse</h1>
-    {% if error %}
-      <p style="color:red;">{{ error }}</p>
-    {% endif %}
-    <form method="post">
-        <label>API Key:
-          <input type="text" name="api_key" value="{{ request.form.api_key or config['IMMICH_API_KEY'] or '' }}">
-        </label><br><br>
-        <label>Base URL:
-          <input type="text" name="base_url" value="{{ request.form.base_url or config['IMMICH_BASE_URL'] or '' }}">
-        </label><br><br>
-        <label>Output Folder:
-          <input type="text" name="output_folder" value="{{ request.form.output_folder or config['IMMICH_OUTPUT_FOLDER'] or 'output' }}">
-        </label><br><br>
-        <label>Person ID: <input type="text" name="person_id" required></label><br><br>
-        <label>Padding Percent:
-          <input type="number" step="0.01" name="padding_percent" value="{{ request.form.padding_percent or 0.3 }}">
-        </label><br><br>
-        <label>Resize Width:
-          <input type="number" name="resize_width" value="{{ request.form.resize_width or 512 }}">
-        </label><br><br>
-        <label>Resize Height:
-          <input type="number" name="resize_height" value="{{ request.form.resize_height or 512 }}">
-        </label><br><br>
-        <label>Min Face Width:
-          <input type="number" name="min_face_width" value="{{ request.form.min_face_width or 128 }}">
-        </label><br><br>
-        <label>Min Face Height:
-          <input type="number" name="min_face_height" value="{{ request.form.min_face_height or 128 }}">
-        </label><br><br>
-        <label>Pose Threshold:
-          <input type="number" step="0.1" name="pose_threshold" value="{{ request.form.pose_threshold or 25 }}">
-        </label><br><br>
-        <label>Desired Left Eye X:
-          <input type="number" step="0.01" name="desired_left_eye_x" value="{{ request.form.desired_left_eye_x or 0.35 }}">
-        </label><br><br>
-        <label>Desired Left Eye Y:
-          <input type="number" step="0.01" name="desired_left_eye_y" value="{{ request.form.desired_left_eye_y or 0.45 }}">
-        </label><br><br>
-        <label>Max Workers:
-          <input type="number" name="max_workers" value="{{ request.form.max_workers or 4 }}">
-        </label><br><br>
-        <label>Face Detect Model Path:
-          <input type="text" name="face_detect_model_path" value="{{ request.form.face_detect_model_path or 'mmod_human_face_detector.dat' }}">
-        </label><br><br>
-        <label>Landmark Model Path:
-          <input type="text" name="landmark_model_path" value="{{ request.form.landmark_model_path or 'shape_predictor_68_face_landmarks.dat' }}">
-        </label><br><br>
-        <button type="submit">Generate Timelapse</button>
-    </form>
-    {% if result %}
-        <h2>{{ result }}</h2>
-    {% endif %}
+    <div class="container">
+        <h1>Immich Selfie Timelapse Tool</h1>
+        {% if error %}
+            <p class="error">{{ error }}</p>
+        {% endif %}
+        <form method="post">
+            <label>
+                Person ID:
+                <input type="text" name="person_id" required>
+            </label>
+            <label>
+                Padding Percent:
+                <input type="number" step="0.01" name="padding_percent" value="{{ request.form.padding_percent or 0.3 }}">
+            </label>
+            <label>
+                Output Image Size:
+                <input type="number" name="resize_size" value="{{ request.form.resize_size or 512 }}">
+            </label>
+            <label>
+                Face Resolution Threshold:
+                <input type="number" name="face_resolution_threshold" value="{{ request.form.face_resolution_threshold or 128 }}">
+            </label>
+            <label>
+                Pose Threshold:
+                <input type="number" step="0.1" name="pose_threshold" value="{{ request.form.pose_threshold or 25 }}">
+            </label>
+            <details>
+                <summary>Advanced Options</summary>
+                <label>
+                    Desired Left Eye X:
+                    <input type="number" step="0.01" name="desired_left_eye_x" value="{{ request.form.desired_left_eye_x or 0.35 }}">
+                </label>
+                <label>
+                    Desired Left Eye Y:
+                    <input type="number" step="0.01" name="desired_left_eye_y" value="{{ request.form.desired_left_eye_y or 0.45 }}">
+                </label>
+                <label>
+                    Max Workers:
+                    <input type="number" name="max_workers" value="{{ request.form.max_workers or 4 }}">
+                </label>
+            </details>
+            <button type="submit">Generate Timelapse</button>
+        </form>
+        {% if result %}
+            <p class="result">{{ result }}</p>
+        {% endif %}
+    </div>
 </body>
 </html>

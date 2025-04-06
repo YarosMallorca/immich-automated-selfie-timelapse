@@ -4,9 +4,7 @@ import os
 import io
 import requests
 import concurrent.futures
-import argparse
 from datetime import datetime
-
 from PIL import Image, ImageOps
 import numpy as np
 import cv2
@@ -243,7 +241,7 @@ def process_faces(
     min_face_height=128,
     pose_threshold=25,
     desired_left_eye=(0.35, 0.45),
-    max_workers=4,
+    max_workers=1,
     face_detect_model_path="mmod_human_face_detector.dat",
     landmark_model_path="shape_predictor_68_face_landmarks.dat"
 ):
