@@ -25,14 +25,13 @@ def index():
     max_workers_options = list(range(1, AVAILABLE_CORES + 1))
     if request.method == "POST":
         try:
-            # Read critical parameters from environment variables
             api_key = API_KEY
             base_url = BASE_URL
             output_folder = OUTPUT_FOLDER
 
             # Get user input from the form
             person_id = request.form["person_id"]
-            padding_percent = float(request.form.get("padding_percent", 0.3))
+            padding_percent = float(request.form.get("padding_percent", 30)) / 100
             resize_size = int(request.form.get("resize_size", 512))
             face_resolution_threshold = int(request.form.get("face_resolution_threshold", 128))
             pose_threshold = float(request.form.get("pose_threshold", 25))

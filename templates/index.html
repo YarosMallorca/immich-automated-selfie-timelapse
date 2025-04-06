@@ -79,23 +79,23 @@
                 <input type="text" name="person_id" required>
             </label>
             <label>
-                Padding Percent:
-                <input type="number" step="0.01" name="padding_percent" value="{{ request.form.padding_percent or 0.3 }}">
+                Padding added around the face in percent:
+                <input type="number" step="1" name="padding_percent" value="{{ request.form.padding_percent or 30 }}">
             </label>
             <label>
-                Output Image Size:
+                Output image size:
                 <input type="number" name="resize_size" value="{{ request.form.resize_size or 512 }}">
             </label>
             <label>
-                Face Resolution Threshold:
+                Face resolution threshold:
                 <input type="number" name="face_resolution_threshold" value="{{ request.form.face_resolution_threshold or 128 }}">
             </label>
             <label>
-                Pose Threshold:
+                Max orientation of the face (degrees):
                 <input type="number" step="0.1" name="pose_threshold" value="{{ request.form.pose_threshold or 25 }}">
             </label>
             <label>
-                Max Workers:
+                Max Workers (CPU cores):
                 <select name="max_workers">
                     {% for i in max_workers_options %}
                         <option value="{{ i }}" {% if request.form.max_workers|default('1')|int == i %}selected{% endif %}>{{ i }}</option>
