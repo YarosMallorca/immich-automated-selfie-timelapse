@@ -55,6 +55,44 @@ class ProcessConfig:
     landmark_model_path: str = "shape_predictor_68_face_landmarks.dat"
 
 
+def validate_immich_connection(api_key, base_url):
+    """
+    Validates that the provided Immich API key and base URL are working.
+
+    Args:
+        api_key (str): API key for authentication.
+        base_url (str): Base URL of the API.
+
+    Returns:
+        tuple: (bool, str) - (is_valid, error_message)
+    """
+    if not api_key or not base_url:
+        return False, "API key and base URL are required."
+
+    try:
+        headers = {
+            'Accept': 'application/json',
+            'x-api-key': api_key,
+        }
+        # Try a simple ping to the server via the user endpoint
+        url = f"{base_url}/server/about"
+        response = requests.get(url, headers=headers, timeout=5)
+
+        if response.status_code == 200:
+            return True, "Connection successful."
+        elif response.status_code == 401:
+            return False, "Authentication failed. Invalid API key."
+        else:
+            return False, f"Server error: Status code {response.status_code}"
+
+    except requests.exceptions.ConnectionError:
+        return False, "Connection error. Check the base URL."
+    except requests.exceptions.Timeout:
+        return False, "Connection timed out. Server might be down."
+    except Exception as e:
+        return False, f"Unexpected error: {str(e)}"
+
+
 def initialize_worker(face_detect_model_path, landmark_model_path):
     """
     Initializes the face detector and predictor in each worker process.
@@ -64,7 +102,7 @@ def initialize_worker(face_detect_model_path, landmark_model_path):
     face_predictor = dlib.shape_predictor(landmark_model_path)
 
 
-def get_assets_with_person(api_key, base_url, person_id):
+def get_assets_with_person(api_key, base_url, person_id, date_from=None, date_to=None):
     """
     Retrieve all image assets containing the specified person by querying the API.
 
@@ -72,6 +110,8 @@ def get_assets_with_person(api_key, base_url, person_id):
         api_key (str): API key for authentication.
         base_url (str): Base URL of the API.
         person_id (str): ID of the person to search for.
+        date_from (str, optional): Start date in ISO format (YYYY-MM-DD).
+        date_to (str, optional): End date in ISO format (YYYY-MM-DD).
 
     Returns:
         list: List of asset dictionaries.
@@ -93,6 +133,16 @@ def get_assets_with_person(api_key, base_url, person_id):
         "withPeople": True,
         "withStacked": True,
     }
+
+    # Add date filters if provided
+    if date_from:
+        payload["dateFilter"] = payload.get("dateFilter", {})
+        payload["dateFilter"]["from"] = f"{date_from}T00:00:00.000Z"
+
+    if date_to:
+        payload["dateFilter"] = payload.get("dateFilter", {})
+        payload["dateFilter"]["to"] = f"{date_to}T23:59:59.999Z"
+
     while payload["page"] is not None:
         response = requests.post(url, headers=headers, json=payload)
         if response.status_code != 200:
@@ -105,7 +155,6 @@ def get_assets_with_person(api_key, base_url, person_id):
         logger.info(f"Fetched page {payload['page']} with {len(data['assets']['items'])} assets")
         payload["page"] = data['assets'].get('nextPage')
     return all_assets
-
 
 def download_asset(api_key, base_url, asset_id):
     """
@@ -343,7 +392,7 @@ def process_asset_wrapper(args):
     return process_asset_worker(asset, config)
 
 
-def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None):
+def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None):
     """
     Processes assets containing the person and saves aligned face images.
 
@@ -354,12 +403,21 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None):
         config (ProcessConfig): Configuration parameters.
         max_workers (int): Number of worker processes.
         progress_callback (callable, optional): A callback function for progress updates.
+        date_from (str, optional): Start date for filtering assets.
+        date_to (str, optional): End date for filtering assets.
 
     Returns:
         list: A list of file paths of the saved images.
     """
     os.makedirs(config.output_folder, exist_ok=True)
-    assets = get_assets_with_person(config.api_key, config.base_url, config.person_id)
+
+    # Check if we need to stop processing
+    if progress_callback and hasattr(progress_callback, "__self__") and getattr(progress_callback.__self__, "status",
+                                                                                "") == "cancelled":
+        logger.info("Processing was cancelled.")
+        return []
+
+    assets = get_assets_with_person(config.api_key, config.base_url, config.person_id, date_from, date_to)
     logger.info(f"Found {len(assets)} assets containing the person.")
     total_assets = len(assets)
     if progress_callback:
@@ -375,6 +433,13 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None):
         # Pack arguments for each asset
         tasks = ((asset, config) for asset in assets)
         for result in tqdm(executor.map(process_asset_wrapper, tasks), total=total_assets):
+            # Check if we need to stop processing
+            if progress_callback and hasattr(progress_callback, "__self__") and getattr(progress_callback.__self__,
+                                                                                        "status", "") == "cancelled":
+                logger.info("Processing was cancelled.")
+                executor.shutdown(wait=False)
+                break
+
             if result is not None:
                 processed_files.append(result)
             if progress_callback:

@@ -1,8 +1,9 @@
 import os
 import multiprocessing
 import threading
-from flask import Flask, request, render_template, jsonify
-from timelapse import process_faces, ProcessConfig
+import subprocess
+from flask import Flask, request, render_template, jsonify, redirect, url_for
+from timelapse import process_faces, ProcessConfig, validate_immich_connection
 
 app = Flask(__name__)
 
@@ -20,6 +21,8 @@ AVAILABLE_CORES = multiprocessing.cpu_count()
 
 # Global progress dictionary – only one job at a time is assumed here
 progress_info = {"completed": 0, "total": 0, "status": "idle"}
+# Global processing thread reference
+processing_thread = None
 
 
 def update_progress(current, total):
@@ -35,7 +38,8 @@ def update_progress(current, total):
     progress_info["status"] = "running" if current < total else "done"
 
 
-def background_process(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold, max_workers):
+def background_process(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold, max_workers,
+                       date_from, date_to, compile_video, framerate):
     """
     Background process that creates a configuration object and calls process_faces.
 
@@ -46,6 +50,10 @@ def background_process(person_id, padding_percent, resize_size, face_resolution_
         face_resolution_threshold (int): Minimum required face resolution.
         pose_threshold (float): Maximum allowed head pose deviation.
         max_workers (int): Number of concurrent worker processes.
+        date_from (str): Start date for asset filtering.
+        date_to (str): End date for asset filtering.
+        compile_video (bool): Whether to compile the images into a video.
+        framerate (int): Frames per second for the output video.
     """
     try:
         progress_info["status"] = "running"
@@ -65,11 +73,31 @@ def background_process(person_id, padding_percent, resize_size, face_resolution_
             face_detect_model_path=FACE_DETECT_MODEL,
             landmark_model_path=LANDMARK_MODEL
         )
-        process_faces(config, max_workers=max_workers, progress_callback=update_progress)
+        processed_files = process_faces(config, max_workers=max_workers, progress_callback=update_progress,
+                                        date_from=date_from, date_to=date_to)
+
+        # Compile video if requested and there are processed files
+        if compile_video and processed_files:
+            output_video = os.path.join(OUTPUT_FOLDER, "timelapse.mp4")
+            ffmpeg_command = [
+                "ffmpeg", "-y",
+                "-framerate", str(framerate),
+                "-pattern_type", "glob",
+                "-i", os.path.join(OUTPUT_FOLDER, "*.jpg"),
+                "-c:v", "libx264",
+                "-pix_fmt", "yuv420p",
+                output_video
+            ]
+            try:
+                subprocess.run(ffmpeg_command, check=True)
+                progress_info["video_path"] = output_video
+                progress_info["status"] = "video_done"
+            except subprocess.CalledProcessError as e:
+                progress_info["status"] = f"Video compilation failed: {e}"
+        else:
+            progress_info["status"] = "done"
     except Exception as e:
         progress_info["status"] = f"error: {e}"
-    else:
-        progress_info["status"] = "done"
 
 
 @app.route("/progress")
@@ -80,15 +108,45 @@ def progress():
     return jsonify(progress_info)
 
 
+@app.route("/check-connection")
+def check_connection():
+    """
+    Endpoint to check the Immich server connection.
+    """
+    is_valid, message = validate_immich_connection(API_KEY, BASE_URL)
+    return jsonify({"valid": is_valid, "message": message})
+
+
+@app.route("/cancel", methods=["POST"])
+def cancel():
+    """
+    Endpoint to cancel the current processing job.
+    """
+    global processing_thread
+    if processing_thread and processing_thread.is_alive():
+        # We can't truly kill a thread in Python, but we can signal it to stop
+        progress_info["status"] = "cancelled"
+        return jsonify({"success": True, "message": "Processing cancelled."})
+    else:
+        return jsonify({"success": False, "message": "No active processing to cancel."})
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     """
     Index route that displays the form and starts processing in a background thread on POST.
     """
+    global processing_thread
+
     result = None
     error = None
-    # Create max_workers_options as a list from 1 to AVAILABLE_CORES
-    max_workers_options = list(range(1, AVAILABLE_CORES + 1))
+
+    # Check if Immich server connection is valid
+    is_valid, message = validate_immich_connection(API_KEY, BASE_URL)
+    if not is_valid and request.method == "POST":
+        error = f"Immich server connection error: {message}"
+        return render_template("index.html", error=error, max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
+
     if request.method == "POST":
         try:
             person_id = request.form["person_id"]
@@ -96,22 +154,34 @@ def index():
             resize_size = int(request.form.get("resize_size", 512))
             face_resolution_threshold = int(request.form.get("face_resolution_threshold", 128))
             pose_threshold = float(request.form.get("pose_threshold", 25))
-            max_workers = int(request.form.get("max_workers", 1))  # default is 1
+            max_workers = int(request.form.get("max_workers", 1))
+
+            # Date ranges are optional
+            date_from = request.form.get("date_from") or None
+            date_to = request.form.get("date_to") or None
+
+            compile_video = request.form.get("compile_video") == "on"
+            framerate = int(request.form.get("framerate", 24))
 
             # Reset progress info before starting
             progress_info["completed"] = 0
             progress_info["total"] = 0
             progress_info["status"] = "idle"
+            progress_info.pop("video_path", None)
 
             # Start the processing in a background thread
-            threading.Thread(
+            processing_thread = threading.Thread(
                 target=background_process,
-                args=(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold, max_workers)
-            ).start()
+                args=(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold, max_workers,
+                      date_from, date_to, compile_video, framerate)
+            )
+            processing_thread.start()
             result = "Processing started. Please wait and watch the progress bar below."
         except Exception as e:
             error = f"Error processing request: {e}"
-    return render_template("index.html", result=result, error=error, max_workers_options=max_workers_options)
+
+    return render_template("index.html", result=result, error=error,
+                           max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
 
 
 if __name__ == "__main__":

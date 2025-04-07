@@ -22,8 +22,25 @@
             text-align: center;
             color: #333;
         }
+        .connection-status {
+            text-align: center;
+            padding: 10px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
         form {
             margin-top: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
         }
         label {
             display: block;
@@ -32,6 +49,7 @@
         }
         input[type="text"],
         input[type="number"],
+        input[type="date"],
         select {
             width: calc(100% - 20px);
             padding: 8px 10px;
@@ -40,7 +58,16 @@
             border-radius: 4px;
             font-size: 14px;
         }
-        button {
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+            margin-top: 10px;
+        }
+        .checkbox-container label {
+            margin-left: 10px;
+            margin-bottom: 0;
+        }
+        .button-primary {
             background: #28a745;
             color: #fff;
             padding: 10px 20px;
@@ -51,8 +78,26 @@
             display: block;
             margin: 20px auto 0;
         }
-        button:hover {
+        .button-primary:hover {
             background: #218838;
+        }
+        .button-primary:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .button-danger {
+            background: #dc3545;
+            color: #fff;
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: block;
+            margin: 10px auto 0;
+        }
+        .button-danger:hover {
+            background: #c82333;
         }
         .result, .error {
             text-align: center;
@@ -73,44 +118,114 @@
             width: 100%;
             height: 25px;
         }
+        .section-header {
+            margin-top: 25px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 5px;
+            font-weight: bold;
+        }
+        .flex-row {
+            display: flex;
+            gap: 15px;
+        }
+        .flex-row > div {
+            flex: 1;
+        }
+        .hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Immich Selfie Timelapse Tool</h1>
+
+        <!-- Connection Status -->
+        <div id="connectionStatus" class="connection-status">
+            Checking Immich server connection...
+        </div>
+
         {% if error %}
             <p class="error">{{ error }}</p>
         {% endif %}
-        <form method="post">
-            <label>
-                Person ID:
-                <input type="text" name="person_id" required>
-            </label>
-            <label>
-                Padding added around the face in percent:
-                <input type="number" step="1" name="padding_percent" value="{{ request.form.padding_percent or 30 }}">
-            </label>
-            <label>
-                Output image size:
-                <input type="number" name="resize_size" value="{{ request.form.resize_size or 512 }}">
-            </label>
-            <label>
-                Face resolution threshold:
-                <input type="number" name="face_resolution_threshold" value="{{ request.form.face_resolution_threshold or 128 }}">
-            </label>
-            <label>
-                Max orientation of the face (degrees):
-                <input type="number" step="0.1" name="pose_threshold" value="{{ request.form.pose_threshold or 25 }}">
-            </label>
-            <label>
-                Max Workers (CPU cores):
-                <select name="max_workers">
-                    {% for i in max_workers_options %}
-                        <option value="{{ i }}" {% if request.form.max_workers|default('1')|int == i %}selected{% endif %}>{{ i }}</option>
-                    {% endfor %}
-                </select>
-            </label>
-            <button type="submit">Generate Timelapse</button>
+
+        <form method="post" id="timelapseForm">
+            <div class="section-header">Person Selection</div>
+            <div class="form-group">
+                <label>
+                    Person ID:
+                    <input type="text" name="person_id" required>
+                </label>
+            </div>
+
+            <div class="section-header">Date Range (Optional)</div>
+            <div class="flex-row">
+                <div class="form-group">
+                    <label>
+                        From Date:
+                        <input type="date" name="date_from">
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label>
+                        To Date:
+                        <input type="date" name="date_to">
+                    </label>
+                </div>
+            </div>
+
+            <div class="section-header">Face Processing Settings</div>
+            <div class="form-group">
+                <label>
+                    Padding added around the face in percent:
+                    <input type="number" step="1" name="padding_percent" value="{{ request.form.padding_percent or 30 }}">
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    Output image size:
+                    <input type="number" name="resize_size" value="{{ request.form.resize_size or 512 }}">
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    Face resolution threshold:
+                    <input type="number" name="face_resolution_threshold" value="{{ request.form.face_resolution_threshold or 128 }}">
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    Max orientation of the face (degrees):
+                    <input type="number" step="0.1" name="pose_threshold" value="{{ request.form.pose_threshold or 25 }}">
+                </label>
+            </div>
+            <div class="form-group">
+                <label>
+                    Max Workers (CPU cores):
+                    <select name="max_workers">
+                        {% for i in max_workers_options %}
+                            <option value="{{ i }}" {% if request.form.max_workers|default('1')|int == i %}selected{% endif %}>{{ i }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+            </div>
+
+            <div class="section-header">Video Output</div>
+            <div class="form-group">
+                <div class="checkbox-container">
+                    <input type="checkbox" id="compile_video" name="compile_video">
+                    <label for="compile_video">Compile timelapse into video</label>
+                </div>
+            </div>
+            <div class="form-group" id="framerateGroup" style="display:none;">
+                <label>
+                    Frames per second:
+                    <input type="number" name="framerate" value="24" min="1" max="60">
+                </label>
+            </div>
+
+            <button type="submit" id="submitButton" class="button-primary">Generate Timelapse</button>
+            <button type="button" id="cancelButton" class="button-danger" style="display:none;">Cancel Processing</button>
         </form>
         {% if result %}
             <p class="result">{{ result }}</p>
@@ -119,26 +234,115 @@
         <div id="progressContainer">
             <progress id="progressBar" value="0" max="100"></progress>
             <p id="progressText">0%</p>
+            <p id="videoResult" style="display:none;">
+                <a id="videoLink" href="#" download>Download Video</a>
+            </p>
         </div>
     </div>
     <script>
+        // Check connection status when page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            checkConnectionStatus();
+        });
+
+        function checkConnectionStatus() {
+            fetch('/check-connection')
+                .then(response => response.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('connectionStatus');
+                    const submitButton = document.getElementById('submitButton');
+
+                    if (data.valid) {
+                        statusDiv.className = 'connection-status connected';
+                        statusDiv.textContent = 'Connected to Immich server';
+                        submitButton.disabled = false;
+                    } else {
+                        statusDiv.className = 'connection-status disconnected';
+                        statusDiv.textContent = 'Error: ' + data.message;
+                        submitButton.disabled = true;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking connection:', error);
+                    const statusDiv = document.getElementById('connectionStatus');
+                    statusDiv.className = 'connection-status disconnected';
+                    statusDiv.textContent = 'Error checking Immich server connection';
+                    document.getElementById('submitButton').disabled = true;
+                });
+        }
+
+        // Toggle framerate field visibility based on checkbox
+        document.getElementById('compile_video').addEventListener('change', function() {
+            document.getElementById('framerateGroup').style.display = this.checked ? 'block' : 'none';
+        });
+
+        // Cancel button
+        document.getElementById('cancelButton').addEventListener('click', function() {
+            fetch('/cancel', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    document.getElementById('progressText').textContent = 'Processing cancelled.';
+                }
+            })
+            .catch(error => console.error('Error:', error));
+        });
+
+        // Progress monitoring
+        let isProcessing = false;
         function fetchProgress() {
             fetch('/progress')
                 .then(response => response.json())
                 .then(data => {
                     const progressBar = document.getElementById("progressBar");
                     const progressText = document.getElementById("progressText");
-                    if (data.total > 0) {
+                    const cancelButton = document.getElementById("cancelButton");
+                    const submitButton = document.getElementById("submitButton");
+                    const videoResult = document.getElementById("videoResult");
+                    const videoLink = document.getElementById("videoLink");
+
+                    // Show/hide cancel button based on status
+                    if (data.status === "running") {
+                        isProcessing = true;
+                        cancelButton.style.display = "block";
+                        submitButton.disabled = true;
+                    } else {
+                        isProcessing = false;
+                        cancelButton.style.display = "none";
+                        submitButton.disabled = false;
+                    }
+
+                    // Handle status messages
+                    if (data.status === "cancelled") {
+                        progressText.textContent = "Processing cancelled.";
+                    } else if (data.status === "done") {
+                        progressText.textContent = "Processing complete!";
+                    } else if (data.status === "video_done") {
+                        progressText.textContent = "Video compilation complete!";
+                        videoResult.style.display = "block";
+                        videoLink.href = "/output/timelapse.mp4";
+                        videoLink.textContent = "Download Timelapse Video";
+                    } else if (data.status.startsWith("error:")) {
+                        progressText.textContent = data.status;
+                    } else if (data.total > 0) {
                         progressBar.max = data.total;
                         progressBar.value = data.completed;
                         const percent = Math.floor((data.completed / data.total) * 100);
-                        progressText.textContent = percent + "%";
+                        progressText.textContent = percent + "% (" + data.completed + "/" + data.total + ")";
                     }
                 })
                 .catch(err => console.error('Error fetching progress:', err));
         }
+
         // Poll every 1 second
         setInterval(fetchProgress, 1000);
+
+        // Form submission
+        document.getElementById('timelapseForm').addEventListener('submit', function() {
+            document.getElementById("videoResult").style.display = "none";
+        });
     </script>
 </body>
 </html>
