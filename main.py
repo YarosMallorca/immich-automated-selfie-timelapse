@@ -10,7 +10,7 @@ app = Flask(__name__)
 # Critical parameters provided via environment variables
 API_KEY = os.environ.get("IMMICH_API_KEY", "")
 BASE_URL = os.environ.get("IMMICH_BASE_URL", "")
-OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "output")
+OUTPUT_FOLDER = "output"
 
 # Model paths
 FACE_DETECT_MODEL = "mmod_human_face_detector.dat"
