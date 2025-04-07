@@ -4,6 +4,7 @@ import io
 import requests
 import concurrent.futures
 from datetime import datetime
+from dataclasses import dataclass
 from PIL import Image, ImageOps
 import numpy as np
 import cv2
@@ -11,16 +12,18 @@ import dlib
 from tqdm import tqdm
 import logging
 
-# Custom logging handler that works with tqdm
+
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
         super().__init__(level)
+
     def emit(self, record):
         try:
             msg = self.format(record)
             tqdm.write(msg)
         except Exception:
             self.handleError(record)
+
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -29,7 +32,50 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datef
 tqdm_handler.setFormatter(formatter)
 logger.addHandler(tqdm_handler)
 
+face_detector = None
+face_predictor = None
+
+@dataclass
+class ProcessConfig:
+    """
+    Dataclass to hold configuration parameters for processing assets.
+    """
+    api_key: str
+    base_url: str
+    person_id: str
+    output_folder: str = "output"
+    padding_percent: float = 0.3
+    resize_width: int = 512
+    resize_height: int = 512
+    min_face_width: int = 128
+    min_face_height: int = 128
+    pose_threshold: float = 25
+    desired_left_eye: tuple = (0.35, 0.45)
+    face_detect_model_path: str = "mmod_human_face_detector.dat"
+    landmark_model_path: str = "shape_predictor_68_face_landmarks.dat"
+
+
+def initialize_worker(face_detect_model_path, landmark_model_path):
+    """
+    Initializes the face detector and predictor in each worker process.
+    """
+    global face_detector, face_predictor
+    face_detector = dlib.cnn_face_detection_model_v1(face_detect_model_path)
+    face_predictor = dlib.shape_predictor(landmark_model_path)
+
+
 def get_assets_with_person(api_key, base_url, person_id):
+    """
+    Retrieve all image assets containing the specified person by querying the API.
+
+    Args:
+        api_key (str): API key for authentication.
+        base_url (str): Base URL of the API.
+        person_id (str): ID of the person to search for.
+
+    Returns:
+        list: List of asset dictionaries.
+    """
     headers = {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
@@ -60,17 +106,51 @@ def get_assets_with_person(api_key, base_url, person_id):
         payload["page"] = data['assets'].get('nextPage')
     return all_assets
 
+
 def download_asset(api_key, base_url, asset_id):
+    """
+    Downloads the original image asset from the API.
+
+    Args:
+        api_key (str): API key for authentication.
+        base_url (str): Base URL of the API.
+        asset_id (str): The asset's ID.
+
+    Returns:
+        bytes: The content of the downloaded image.
+    """
     headers = {'x-api-key': api_key}
     response = requests.get(f'{base_url}/assets/{asset_id}/original', headers=headers)
     response.raise_for_status()
     return response.content
 
+
 def format_timestamp(timestamp):
+    """
+    Converts an ISO formatted timestamp to a custom string format.
+
+    Args:
+        timestamp (str): The timestamp string.
+
+    Returns:
+        str: Formatted timestamp.
+    """
     dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
     return dt.strftime("%Y%m%d_%H%M%S")
 
+
 def crop_face_from_metadata(image, face_data, padding_percent):
+    """
+    Crops the face from the image using metadata and applies padding.
+
+    Args:
+        image (PIL.Image): The original image.
+        face_data (dict): Metadata containing face bounding box info.
+        padding_percent (float): Padding as a percentage of face dimensions.
+
+    Returns:
+        PIL.Image: The cropped face image.
+    """
     face_img_width = face_data.get("imageWidth")
     face_img_height = face_data.get("imageHeight")
     img_width, img_height = image.size
@@ -89,23 +169,36 @@ def crop_face_from_metadata(image, face_data, padding_percent):
     new_y2 = min(y2 + padding, img_height)
     return image.crop((new_x1, new_y1, new_x2, new_y2))
 
+
 def get_head_pose(shape, img_size):
+    """
+    Estimates the head pose (pitch, yaw, roll) using facial landmarks.
+
+    Args:
+        shape (dlib.full_object_detection): Detected facial landmarks.
+        img_size (tuple): The size of the image (width, height).
+
+    Returns:
+        tuple or None: (pitch, yaw, roll) in degrees if successful; otherwise None.
+    """
     image_points = np.array([
-        (shape.part(30).x, shape.part(30).y),
-        (shape.part(8).x, shape.part(8).y),
-        (shape.part(36).x, shape.part(36).y),
-        (shape.part(45).x, shape.part(45).y),
-        (shape.part(48).x, shape.part(48).y),
-        (shape.part(54).x, shape.part(54).y)
+        (shape.part(30).x, shape.part(30).y),  # Nose tip
+        (shape.part(8).x, shape.part(8).y),  # Chin
+        (shape.part(36).x, shape.part(36).y),  # Left eye left corner
+        (shape.part(45).x, shape.part(45).y),  # Right eye right corner
+        (shape.part(48).x, shape.part(48).y),  # Left Mouth corner
+        (shape.part(54).x, shape.part(54).y)  # Right mouth corner
     ], dtype="double")
+
     model_points = np.array([
-        (0.0, 0.0, 0.0),
-        (0.0, -330.0, -65.0),
-        (-225.0, 170.0, -135.0),
-        (225.0, 170.0, -135.0),
-        (-150.0, -150.0, -125.0),
-        (150.0, -150.0, -125.0)
+        (0.0, 0.0, 0.0),  # Nose tip
+        (0.0, -330.0, -65.0),  # Chin
+        (-225.0, 170.0, -135.0),  # Left eye left corner
+        (225.0, 170.0, -135.0),  # Right eye right corner
+        (-150.0, -150.0, -125.0),  # Left Mouth corner
+        (150.0, -150.0, -125.0)  # Right mouth corner
     ])
+
     w, h = img_size
     focal_length = w
     center = (w / 2, h / 2)
@@ -118,27 +211,45 @@ def get_head_pose(shape, img_size):
     success, rotation_vector, translation_vector = cv2.solvePnP(
         model_points, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE
     )
-    rotation_mat, _ = cv2.Rodrigues(rotation_vector)
-    proj_matrix = np.hstack((rotation_mat, translation_vector))
-    _, _, _, _, _, _, eulerAngles = cv2.decomposeProjectionMatrix(proj_matrix)
-    pitch, yaw, roll = [float(angle) for angle in eulerAngles]
+    if not success:
+        logger.info("Head pose estimation failed in solvePnP.")
+        return None
+    rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
+    proj_matrix = np.hstack((rotation_matrix, translation_vector))
+    _, _, _, _, _, _, euler_angles = cv2.decomposeProjectionMatrix(proj_matrix)
+    pitch, yaw, roll = [float(angle) for angle in euler_angles]
     return pitch, yaw, roll
 
-def align_face(image, predictor, detector, desired_face_width, desired_face_height,
-               desired_left_eye, pose_threshold):
+
+def align_face(image, desired_face_width, desired_face_height, desired_left_eye, pose_threshold):
+    """
+    Aligns the face in the image using facial landmarks and head pose estimation.
+
+    Args:
+        image (PIL.Image): The image containing the face.
+        desired_face_width (int): The desired output face width.
+        desired_face_height (int): The desired output face height.
+        desired_left_eye (tuple): The desired relative position of the left eye.
+        pose_threshold (float): The maximum allowable head pose deviation.
+
+    Returns:
+        PIL.Image or None: The aligned face image if successful, otherwise None.
+    """
     image_np = np.array(image)
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-    detections = detector(gray)
+    detections = face_detector(gray)
     if not detections:
         logger.info("No face detected in the crop. Discarding.")
         return None
-    if hasattr(detections[0], "rect"):
-        rect = detections[0].rect
-    else:
-        rect = detections[0]
-    shape = predictor(gray, rect)
+    # Use the first detection; handle both dlib rectangle and CNN detection type.
+    detection = detections[0]
+    rect = detection.rect if hasattr(detection, "rect") else detection
+    shape = face_predictor(gray, rect)
     img_size = (image_np.shape[1], image_np.shape[0])
-    pitch, yaw, roll = get_head_pose(shape, img_size)
+    head_pose = get_head_pose(shape, img_size)
+    if head_pose is None:
+        return None
+    pitch, yaw, roll = head_pose
     if abs(abs(pitch) - 180) > pose_threshold or abs(yaw) > pose_threshold:
         logger.info(f"Face not frontal enough: pitch={pitch:.2f}, yaw={yaw:.2f}, roll={roll:.2f}. Discarding.")
         return None
@@ -154,9 +265,10 @@ def align_face(image, predictor, detector, desired_face_width, desired_face_heig
     scale = desired_eye_distance / eye_distance
     eyes_center = ((left_eye_center[0] + right_eye_center[0]) / 2.0,
                    (left_eye_center[1] + right_eye_center[1]) / 2.0)
+    # Adjust scale factor if needed
     adjusted_scale = scale * 0.8
     M = cv2.getRotationMatrix2D(eyes_center, angle, adjusted_scale)
-    extra_offset_x = 10
+    extra_offset_x = 10  # Could be parameterized if necessary
     tX = desired_face_width * 0.5 + extra_offset_x
     tY = desired_face_height * desired_left_eye[1]
     M[0, 2] += (tX - eyes_center[0])
@@ -170,23 +282,33 @@ def align_face(image, predictor, detector, desired_face_width, desired_face_heig
     )
     return Image.fromarray(aligned_face_np)
 
-def process_asset_worker(asset, api_key, base_url, person_id, output_folder,
-                         padding_percent, min_face_width, min_face_height,
-                         resize_width, resize_height, pose_threshold, desired_left_eye,
-                         cnn_model_path, predictor_model_path):
-    detector = dlib.cnn_face_detection_model_v1(cnn_model_path)
-    local_predictor = dlib.shape_predictor(predictor_model_path)
+
+def process_asset_worker(asset, config: ProcessConfig):
+    """
+    Worker function to process a single asset.
+
+    This function downloads the asset, crops the face based on metadata,
+    verifies resolution, aligns the face, and then saves the aligned face.
+
+    Args:
+        asset (dict): The asset metadata.
+        config (ProcessConfig): Configuration parameters.
+
+    Returns:
+        str or None: The file path of the saved image if processing is successful; otherwise None.
+    """
     try:
         asset_id = asset['id']
         timestamp = format_timestamp(asset['fileCreatedAt'])
-        image_bytes = download_asset(api_key, base_url, asset_id)
+        image_bytes = download_asset(config.api_key, config.base_url, asset_id)
         image = Image.open(io.BytesIO(image_bytes))
         image = ImageOps.exif_transpose(image)
         image = image.convert("RGB")
     except Exception as e:
         logger.info(f"Error processing asset {asset.get('id')}: {e}")
         return None
-    matching_person = next((p for p in asset.get('people', []) if p.get('id') == person_id), None)
+
+    matching_person = next((p for p in asset.get('people', []) if p.get('id') == config.person_id), None)
     if not matching_person:
         logger.info("Subject not in image.")
         return None
@@ -195,60 +317,67 @@ def process_asset_worker(asset, api_key, base_url, person_id, output_folder,
         logger.info("No face data available.")
         return None
     face_data = faces[0]
-    cropped_face = crop_face_from_metadata(image, face_data, padding_percent)
+    cropped_face = crop_face_from_metadata(image, face_data, config.padding_percent)
     face_width, face_height = cropped_face.size
-    if face_width < min_face_width or face_height < min_face_height:
+    if face_width < config.min_face_width or face_height < config.min_face_height:
         logger.info(f"Face resolution too low ({face_width}x{face_height}).")
         return None
-    aligned_face = align_face(cropped_face, local_predictor, detector,
-                              desired_face_width=resize_width,
-                              desired_face_height=resize_height,
-                              desired_left_eye=desired_left_eye,
-                              pose_threshold=pose_threshold)
+    aligned_face = align_face(cropped_face,
+                              desired_face_width=config.resize_width,
+                              desired_face_height=config.resize_height,
+                              desired_left_eye=config.desired_left_eye,
+                              pose_threshold=config.pose_threshold)
     if aligned_face is None:
         return None
-    filename = os.path.join(output_folder, f"{timestamp}.jpg")
+    os.makedirs(config.output_folder, exist_ok=True)
+    filename = os.path.join(config.output_folder, f"{timestamp}.jpg")
     aligned_face.save(filename)
     return filename
 
-def process_asset_wrapper(asset, process_args):
-    return process_asset_worker(asset, *process_args)
 
-def process_faces(
-    api_key,
-    base_url,
-    person_id,
-    output_folder="output",
-    padding_percent=0.3,
-    resize_width=512,
-    resize_height=512,
-    min_face_width=128,
-    min_face_height=128,
-    pose_threshold=25,
-    desired_left_eye=(0.35, 0.45),
-    max_workers=1,
-    face_detect_model_path="mmod_human_face_detector.dat",
-    landmark_model_path="shape_predictor_68_face_landmarks.dat",
-    progress_callback=None  # New optional parameter
-):
-    os.makedirs(output_folder, exist_ok=True)
-    assets = get_assets_with_person(api_key, base_url, person_id)
+def process_asset_wrapper(args):
+    """
+    Wrapper to unpack arguments for the worker function.
+    """
+    asset, config = args
+    return process_asset_worker(asset, config)
+
+
+def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None):
+    """
+    Processes assets containing the person and saves aligned face images.
+
+    This function retrieves assets from the API, then uses a process pool to
+    concurrently download, crop, and align faces.
+
+    Args:
+        config (ProcessConfig): Configuration parameters.
+        max_workers (int): Number of worker processes.
+        progress_callback (callable, optional): A callback function for progress updates.
+
+    Returns:
+        list: A list of file paths of the saved images.
+    """
+    os.makedirs(config.output_folder, exist_ok=True)
+    assets = get_assets_with_person(config.api_key, config.base_url, config.person_id)
     logger.info(f"Found {len(assets)} assets containing the person.")
     total_assets = len(assets)
     if progress_callback:
         progress_callback(0, total_assets)
-    process_args = (
-        api_key, base_url, person_id, output_folder,
-        padding_percent, min_face_width, min_face_height,
-        resize_width, resize_height, pose_threshold, desired_left_eye,
-        face_detect_model_path, landmark_model_path
-    )
-    results = []
-    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as executor:
-        for result in tqdm(executor.map(process_asset_wrapper, assets, [process_args]*total_assets), total=total_assets):
-            results.append(result)
+
+    processed_files = []
+    # Initialize workers with the face detection models
+    initializer_args = (config.face_detect_model_path, config.landmark_model_path)
+    with concurrent.futures.ProcessPoolExecutor(
+            max_workers=max_workers,
+            initializer=initialize_worker,
+            initargs=initializer_args) as executor:
+        # Pack arguments for each asset
+        tasks = ((asset, config) for asset in assets)
+        for result in tqdm(executor.map(process_asset_wrapper, tasks), total=total_assets):
+            if result is not None:
+                processed_files.append(result)
             if progress_callback:
-                progress_callback(len(results), total_assets)
-    processed_files = [r for r in results if r is not None]
+                progress_callback(len(processed_files), total_assets)
     logger.info(f"Finished processing. {len(processed_files)} images saved.")
     return processed_files
