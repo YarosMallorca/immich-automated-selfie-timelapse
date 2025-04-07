@@ -392,7 +392,10 @@ def process_asset_wrapper(args):
     return process_asset_worker(asset, config)
 
 
-def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None):
+# Replacing only the process_faces function in timelapse.py
+
+def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None,
+                  cancel_flag=None):
     """
     Processes assets containing the person and saves aligned face images.
 
@@ -405,6 +408,7 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
         progress_callback (callable, optional): A callback function for progress updates.
         date_from (str, optional): Start date for filtering assets.
         date_to (str, optional): End date for filtering assets.
+        cancel_flag (callable, optional): A function that returns True if processing should be cancelled.
 
     Returns:
         list: A list of file paths of the saved images.
@@ -412,8 +416,7 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
     os.makedirs(config.output_folder, exist_ok=True)
 
     # Check if we need to stop processing
-    if progress_callback and hasattr(progress_callback, "__self__") and getattr(progress_callback.__self__, "status",
-                                                                                "") == "cancelled":
+    if cancel_flag and cancel_flag():
         logger.info("Processing was cancelled.")
         return []
 
@@ -432,17 +435,28 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
             initargs=initializer_args) as executor:
         # Pack arguments for each asset
         tasks = ((asset, config) for asset in assets)
-        for result in tqdm(executor.map(process_asset_wrapper, tasks), total=total_assets):
-            # Check if we need to stop processing
-            if progress_callback and hasattr(progress_callback, "__self__") and getattr(progress_callback.__self__,
-                                                                                        "status", "") == "cancelled":
-                logger.info("Processing was cancelled.")
-                executor.shutdown(wait=False)
-                break
+        future_to_asset = {executor.submit(process_asset_wrapper, args): args[0] for args in
+                           ((asset, config) for asset in assets)}
 
-            if result is not None:
-                processed_files.append(result)
+        for future in tqdm(concurrent.futures.as_completed(future_to_asset), total=total_assets):
+            # Check if we need to stop processing
+            if cancel_flag and cancel_flag():
+                logger.info("Processing was cancelled.")
+                # Cancel all pending futures
+                for f in future_to_asset:
+                    f.cancel()
+                executor.shutdown(wait=False)
+                return processed_files
+
+            try:
+                result = future.result()
+                if result is not None:
+                    processed_files.append(result)
+            except Exception as e:
+                logger.info(f"Asset processing failed: {e}")
+
             if progress_callback:
                 progress_callback(len(processed_files), total_assets)
+
     logger.info(f"Finished processing. {len(processed_files)} images saved.")
     return processed_files

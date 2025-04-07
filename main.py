@@ -8,9 +8,9 @@ from timelapse import process_faces, ProcessConfig, validate_immich_connection
 app = Flask(__name__)
 
 # Critical parameters provided via environment variables
-API_KEY = os.environ.get("IMMICH_API_KEY", "")
-BASE_URL = os.environ.get("IMMICH_BASE_URL", "")
-OUTPUT_FOLDER = os.environ.get("OUTPUT_FOLDER", "output")
+API_KEY = "4ryTBWjXRsaTUHMfOurAC1fcBktEgtoZvMR3lwZUluI"
+BASE_URL = "http://192.168.1.94:2283/api"
+OUTPUT_FOLDER = "output"
 
 # Model paths
 FACE_DETECT_MODEL = "mmod_human_face_detector.dat"
@@ -23,6 +23,8 @@ AVAILABLE_CORES = multiprocessing.cpu_count()
 progress_info = {"completed": 0, "total": 0, "status": "idle"}
 # Global processing thread reference
 processing_thread = None
+# Global flag to signal cancellation
+cancel_requested = False
 
 
 def update_progress(current, total):
@@ -55,6 +57,7 @@ def background_process(person_id, padding_percent, resize_size, face_resolution_
         compile_video (bool): Whether to compile the images into a video.
         framerate (int): Frames per second for the output video.
     """
+    global cancel_requested
     try:
         progress_info["status"] = "running"
         # Build the configuration object for processing
@@ -73,8 +76,16 @@ def background_process(person_id, padding_percent, resize_size, face_resolution_
             face_detect_model_path=FACE_DETECT_MODEL,
             landmark_model_path=LANDMARK_MODEL
         )
+
+        # Pass the cancel flag to the process_faces function
         processed_files = process_faces(config, max_workers=max_workers, progress_callback=update_progress,
-                                        date_from=date_from, date_to=date_to)
+                                        date_from=date_from, date_to=date_to, cancel_flag=lambda: cancel_requested)
+
+        # Check if processing was cancelled
+        if cancel_requested:
+            progress_info["status"] = "cancelled"
+            cancel_requested = False
+            return
 
         # Compile video if requested and there are processed files
         if compile_video and processed_files:
@@ -100,6 +111,21 @@ def background_process(person_id, padding_percent, resize_size, face_resolution_
         progress_info["status"] = f"error: {e}"
 
 
+def check_output_folder():
+    """
+    Checks if the output folder is empty.
+
+    Returns:
+        tuple: (is_empty, file_count) - Boolean indicating if folder is empty and number of files
+    """
+    if not os.path.exists(OUTPUT_FOLDER):
+        os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+        return True, 0
+
+    files = [f for f in os.listdir(OUTPUT_FOLDER) if os.path.isfile(os.path.join(OUTPUT_FOLDER, f))]
+    return len(files) == 0, len(files)
+
+
 @app.route("/progress")
 def progress():
     """
@@ -122,12 +148,16 @@ def cancel():
     """
     Endpoint to cancel the current processing job.
     """
-    global processing_thread
+    global processing_thread, cancel_requested
+
+    # Set the cancel flag
+    cancel_requested = True
+
     if processing_thread and processing_thread.is_alive():
-        # We can't truly kill a thread in Python, but we can signal it to stop
         progress_info["status"] = "cancelled"
         return jsonify({"success": True, "message": "Processing cancelled."})
     else:
+        cancel_requested = False
         return jsonify({"success": False, "message": "No active processing to cancel."})
 
 
@@ -136,19 +166,29 @@ def index():
     """
     Index route that displays the form and starts processing in a background thread on POST.
     """
-    global processing_thread
+    global processing_thread, cancel_requested
 
     result = None
     error = None
+    warning = None
+
+    # Check if output folder is empty
+    is_empty, file_count = check_output_folder()
+    if not is_empty:
+        warning = f"Output folder is not empty. Contains {file_count} files. New images will be added to this folder."
 
     # Check if Immich server connection is valid
     is_valid, message = validate_immich_connection(API_KEY, BASE_URL)
     if not is_valid and request.method == "POST":
         error = f"Immich server connection error: {message}"
-        return render_template("index.html", error=error, max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
+        return render_template("index.html", error=error, warning=warning,
+                               max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
 
     if request.method == "POST":
         try:
+            # Make sure any previous cancel request is cleared
+            cancel_requested = False
+
             person_id = request.form["person_id"]
             padding_percent = float(request.form.get("padding_percent", 30)) / 100
             resize_size = int(request.form.get("resize_size", 512))
@@ -180,7 +220,7 @@ def index():
         except Exception as e:
             error = f"Error processing request: {e}"
 
-    return render_template("index.html", result=result, error=error,
+    return render_template("index.html", result=result, error=error, warning=warning,
                            max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
 
 
