@@ -384,13 +384,6 @@ def process_asset_worker(asset, config: ProcessConfig):
     return filename
 
 
-def process_asset_wrapper(args):
-    """
-    Wrapper to unpack arguments for the worker function.
-    """
-    asset, config = args
-    return process_asset_worker(asset, config)
-
 
 def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None,
                   cancel_flag=None):
@@ -413,36 +406,30 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
     """
     os.makedirs(config.output_folder, exist_ok=True)
 
-    # Check if we need to stop processing
     if cancel_flag and cancel_flag():
         logger.info("Processing was cancelled.")
         return []
 
     assets = get_assets_with_person(config.api_key, config.base_url, config.person_id, date_from, date_to)
     logger.info(f"Found {len(assets)} assets containing the person.")
+
     total_assets = len(assets)
     if progress_callback:
         progress_callback(0, total_assets)
-
     processed_files = []
-    completed_count = 0  # Track all processed items, successful or not
+    completed_count = 0
 
-    # Initialize workers with the face detection models
     initializer_args = (config.face_detect_model_path, config.landmark_model_path)
     with concurrent.futures.ProcessPoolExecutor(
             max_workers=max_workers,
             initializer=initialize_worker,
             initargs=initializer_args) as executor:
-        # Pack arguments for each asset
-        tasks = ((asset, config) for asset in assets)
-        future_to_asset = {executor.submit(process_asset_wrapper, args): args[0] for args in
-                           ((asset, config) for asset in assets)}
-
+        future_to_asset = {executor.submit(process_asset_worker, asset, config): asset
+                           for asset in assets}
         for future in tqdm(concurrent.futures.as_completed(future_to_asset), total=total_assets):
-            # Check if we need to stop processing
+
             if cancel_flag and cancel_flag():
                 logger.info("Processing was cancelled.")
-                # Cancel all pending futures
                 for f in future_to_asset:
                     f.cancel()
                 executor.shutdown(wait=False)
@@ -455,9 +442,7 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
             except Exception as e:
                 logger.info(f"Asset processing failed: {e}")
 
-            # Increment the completed count regardless of success/failure
             completed_count += 1
-
             if progress_callback:
                 progress_callback(completed_count, total_assets)
 
