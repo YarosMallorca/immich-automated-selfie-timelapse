@@ -97,16 +97,39 @@ def background_process(person_id, padding_percent, resize_size, face_resolution_
                 "-i", os.path.join(OUTPUT_FOLDER, "*.jpg"),
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
+                "-progress", "pipe:1",
                 output_video
             ]
             try:
-                subprocess.run(ffmpeg_command, check=True)
-                progress_info["video_path"] = output_video
-                progress_info["status"] = "video_done"
+                progress_info["completed"] = 0
+                progress_info["total"] = 100
+                progress_info["status"] = "video_compiling"
+
+                process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                           universal_newlines=True)
+                for line in process.stdout:
+                    line = line.strip()
+                    if line:
+                        if line.startswith("frame="):
+                            try:
+                                parts = line.split("=")
+                                frame = int(parts[1].strip())
+                                progress_info["completed"] = min(frame, progress_info["total"])
+                            except Exception:
+                                pass
+                        if "progress=end" in line:
+                            progress_info["completed"] = progress_info["total"]
+                            break
+                process.wait()
+                if process.returncode == 0:
+                    progress_info["status"] = "video_done"
+                else:
+                    progress_info["status"] = "Video compilation failed."
             except subprocess.CalledProcessError as e:
                 progress_info["status"] = f"Video compilation failed: {e}"
         else:
             progress_info["status"] = "done"
+
     except Exception as e:
         progress_info["status"] = f"error: {e}"
 
@@ -226,3 +249,4 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+    
