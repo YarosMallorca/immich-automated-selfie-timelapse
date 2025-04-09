@@ -392,8 +392,6 @@ def process_asset_wrapper(args):
     return process_asset_worker(asset, config)
 
 
-# Replacing only the process_faces function in timelapse.py
-
 def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None,
                   cancel_flag=None):
     """
@@ -427,6 +425,8 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
         progress_callback(0, total_assets)
 
     processed_files = []
+    completed_count = 0  # Track all processed items, successful or not
+
     # Initialize workers with the face detection models
     initializer_args = (config.face_detect_model_path, config.landmark_model_path)
     with concurrent.futures.ProcessPoolExecutor(
@@ -455,8 +455,11 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
             except Exception as e:
                 logger.info(f"Asset processing failed: {e}")
 
-            if progress_callback:
-                progress_callback(len(processed_files), total_assets)
+            # Increment the completed count regardless of success/failure
+            completed_count += 1
 
-    logger.info(f"Finished processing. {len(processed_files)} images saved.")
+            if progress_callback:
+                progress_callback(completed_count, total_assets)
+
+    logger.info(f"Finished processing. {len(processed_files)} images saved out of {total_assets} assets.")
     return processed_files
