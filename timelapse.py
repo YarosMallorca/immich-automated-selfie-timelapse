@@ -134,14 +134,11 @@ def get_assets_with_person(api_key, base_url, person_id, date_from=None, date_to
         "withStacked": True,
     }
 
-    # Add date filters if provided
     if date_from:
-        payload["dateFilter"] = payload.get("dateFilter", {})
-        payload["dateFilter"]["from"] = f"{date_from}T00:00:00.000Z"
+        payload["takenAfter"] = f"{date_from}T00:00:00.000Z"
 
     if date_to:
-        payload["dateFilter"] = payload.get("dateFilter", {})
-        payload["dateFilter"]["to"] = f"{date_to}T23:59:59.999Z"
+        payload["takenBefore"] = f"{date_to}T23:59:59.999Z"
 
     while payload["page"] is not None:
         response = requests.post(url, headers=headers, json=payload)
