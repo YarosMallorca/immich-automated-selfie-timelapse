@@ -171,20 +171,6 @@ def download_asset(api_key, base_url, asset_id):
     return response.content
 
 
-def format_timestamp(timestamp):
-    """
-    Converts an ISO formatted timestamp to a custom string format.
-
-    Args:
-        timestamp (str): The timestamp string.
-
-    Returns:
-        str: Formatted timestamp.
-    """
-    dt = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    return dt.strftime("%Y%m%d_%H%M%S")
-
-
 def crop_face_from_metadata(image, face_data, padding_percent):
     """
     Crops the face from the image using metadata and applies padding.
@@ -311,11 +297,10 @@ def align_face(image, desired_face_width, desired_face_height, desired_left_eye,
     scale = desired_eye_distance / eye_distance
     eyes_center = ((left_eye_center[0] + right_eye_center[0]) / 2.0,
                    (left_eye_center[1] + right_eye_center[1]) / 2.0)
-    # Adjust scale factor if needed
-    adjusted_scale = scale * 0.8
-    M = cv2.getRotationMatrix2D(eyes_center, angle, adjusted_scale)
-    extra_offset_x = 10  # Could be parameterized if necessary
-    tX = desired_face_width * 0.5 + extra_offset_x
+
+    M = cv2.getRotationMatrix2D(eyes_center, angle, scale)
+
+    tX = desired_face_width * 0.5
     tY = desired_face_height * desired_left_eye[1]
     M[0, 2] += (tX - eyes_center[0])
     M[1, 2] += (tY - eyes_center[1])
@@ -345,7 +330,8 @@ def process_asset_worker(asset, config: ProcessConfig):
     """
     try:
         asset_id = asset['id']
-        timestamp = format_timestamp(asset['fileCreatedAt'])
+        dt = datetime.fromisoformat(asset['fileCreatedAt'].replace("Z", "+00:00"))
+        timestamp = dt.strftime("%Y%m%d_%H%M%S")
         image_bytes = download_asset(config.api_key, config.base_url, asset_id)
         image = Image.open(io.BytesIO(image_bytes))
         image = ImageOps.exif_transpose(image)
