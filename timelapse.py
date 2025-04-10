@@ -279,7 +279,7 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
     shape = face_predictor(gray, rect)
 
     # Check if face landmarks were detected
-    if shape.num_parts() != 68:
+    if shape.num_parts != 68:
         logger.info("Landmark detection failed - could not find all 68 facial landmarks.")
         return None
 
@@ -371,8 +371,6 @@ def process_asset_worker(asset, config: ProcessConfig):
         return None
     face_data = faces[0]
     cropped_face = crop_face_from_metadata(image, face_data, config.padding_percent)
-    # filename = os.path.join(config.output_folder, f"crop_{timestamp}.jpg")
-    # cropped_face.save(f"{filename}")
     face_width, face_height = cropped_face.size
     if face_width < config.min_face_width or face_height < config.min_face_height:
         logger.info(f"Face resolution too low ({face_width}x{face_height}).")
