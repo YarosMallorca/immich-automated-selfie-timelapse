@@ -13,10 +13,8 @@ BASE_URL = os.environ.get("IMMICH_BASE_URL", "")
 OUTPUT_FOLDER = "output"
 
 # Model paths
-FACE_DETECT_MODEL = "mmod_human_face_detector.dat"
 LANDMARK_MODEL = "shape_predictor_68_face_landmarks.dat"
 
-LEFT_EYE_POS = (0.35, 0.45)
 AVAILABLE_CORES = multiprocessing.cpu_count()
 
 # Global progress dictionary – only one job at a time is assumed here
@@ -40,8 +38,9 @@ def update_progress(current, total):
     progress_info["status"] = "running" if current < total else "done"
 
 
-def background_process(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold, max_workers,
-                       date_from, date_to, compile_video, framerate):
+def background_process(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold,
+                       left_eye_pos,
+                       max_workers, date_from, date_to, compile_video, framerate):
     """
     Background process that creates a configuration object and calls process_faces.
 
@@ -51,6 +50,7 @@ def background_process(person_id, padding_percent, resize_size, face_resolution_
         resize_size (int): Desired width and height for the aligned face image.
         face_resolution_threshold (int): Minimum required face resolution.
         pose_threshold (float): Maximum allowed head pose deviation.
+        left_eye_pos (tuple): The desired relative position of the left eye.
         max_workers (int): Number of concurrent worker processes.
         date_from (str): Start date for asset filtering.
         date_to (str): End date for asset filtering.
@@ -72,12 +72,10 @@ def background_process(person_id, padding_percent, resize_size, face_resolution_
             min_face_width=face_resolution_threshold,
             min_face_height=face_resolution_threshold,
             pose_threshold=pose_threshold,
-            desired_left_eye=LEFT_EYE_POS,
-            face_detect_model_path=FACE_DETECT_MODEL,
+            left_eye_pos=left_eye_pos,
             landmark_model_path=LANDMARK_MODEL
         )
 
-        # Pass the cancel flag to the process_faces function
         processed_files = process_faces(config, max_workers=max_workers, progress_callback=update_progress,
                                         date_from=date_from, date_to=date_to, cancel_flag=lambda: cancel_requested)
 
@@ -217,6 +215,12 @@ def index():
             resize_size = int(request.form.get("resize_size", 512))
             face_resolution_threshold = int(request.form.get("face_resolution_threshold", 128))
             pose_threshold = float(request.form.get("pose_threshold", 25))
+
+            # Parse left_eye_pos tuple from form
+            left_eye_x = float(request.form.get("left_eye_x", 0.35))
+            left_eye_y = float(request.form.get("left_eye_y", 0.45))
+            left_eye_pos = (left_eye_x, left_eye_y)
+
             max_workers = int(request.form.get("max_workers", 1))
 
             # Date ranges are optional
@@ -235,8 +239,8 @@ def index():
             # Start the processing in a background thread
             processing_thread = threading.Thread(
                 target=background_process,
-                args=(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold, max_workers,
-                      date_from, date_to, compile_video, framerate)
+                args=(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold,
+                      left_eye_pos, max_workers, date_from, date_to, compile_video, framerate)
             )
             processing_thread.start()
             result = "Processing started. Please wait and watch the progress bar below."
@@ -249,4 +253,3 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-    

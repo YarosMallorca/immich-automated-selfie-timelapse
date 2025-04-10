@@ -32,8 +32,8 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datef
 tqdm_handler.setFormatter(formatter)
 logger.addHandler(tqdm_handler)
 
-face_detector = None
 face_predictor = None
+
 
 @dataclass
 class ProcessConfig:
@@ -50,8 +50,7 @@ class ProcessConfig:
     min_face_width: int = 128
     min_face_height: int = 128
     pose_threshold: float = 25
-    desired_left_eye: tuple = (0.35, 0.45)
-    face_detect_model_path: str = "mmod_human_face_detector.dat"
+    left_eye_pos: tuple = (0.35, 0.45)
     landmark_model_path: str = "shape_predictor_68_face_landmarks.dat"
 
 
@@ -93,12 +92,11 @@ def validate_immich_connection(api_key, base_url):
         return False, f"Unexpected error: {str(e)}"
 
 
-def initialize_worker(face_detect_model_path, landmark_model_path):
+def initialize_worker(landmark_model_path):
     """
-    Initializes the face detector and predictor in each worker process.
+    Initializes the face predictor in each worker process.
     """
-    global face_detector, face_predictor
-    face_detector = dlib.cnn_face_detection_model_v1(face_detect_model_path)
+    global face_predictor
     face_predictor = dlib.shape_predictor(landmark_model_path)
 
 
@@ -152,6 +150,7 @@ def get_assets_with_person(api_key, base_url, person_id, date_from=None, date_to
         logger.info(f"Fetched page {payload['page']} with {len(data['assets']['items'])} assets")
         payload["page"] = data['assets'].get('nextPage')
     return all_assets
+
 
 def download_asset(api_key, base_url, asset_id):
     """
@@ -253,15 +252,17 @@ def get_head_pose(shape, img_size):
     return pitch, yaw, roll
 
 
-def align_face(image, desired_face_width, desired_face_height, desired_left_eye, pose_threshold):
+
+def align_face(image, face_data, desired_face_width, desired_face_height, left_eye_pos, pose_threshold):
     """
     Aligns the face in the image using facial landmarks and head pose estimation.
 
     Args:
-        image (PIL.Image): The image containing the face.
+        image (PIL.Image): The cropped image containing just the face.
+        face_data (dict): Metadata containing face bounding box info (not used for detection).
         desired_face_width (int): The desired output face width.
         desired_face_height (int): The desired output face height.
-        desired_left_eye (tuple): The desired relative position of the left eye.
+        left_eye_pos (tuple): The desired relative position of the left eye.
         pose_threshold (float): The maximum allowable head pose deviation.
 
     Returns:
@@ -269,41 +270,60 @@ def align_face(image, desired_face_width, desired_face_height, desired_left_eye,
     """
     image_np = np.array(image)
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
-    detections = face_detector(gray)
-    if not detections:
-        logger.info("No face detected in the crop. Discarding.")
-        return None
-    # Use the first detection; handle both dlib rectangle and CNN detection type.
-    detection = detections[0]
-    rect = detection.rect if hasattr(detection, "rect") else detection
+
+    # Since we already have a cropped face image, create a rectangle for the whole image
+    img_height, img_width = gray.shape
+    rect = dlib.rectangle(0, 0, img_width, img_height)
+
+    # Get facial landmarks
     shape = face_predictor(gray, rect)
-    img_size = (image_np.shape[1], image_np.shape[0])
-    head_pose = get_head_pose(shape, img_size)
+
+    # Check if face landmarks were detected
+    if shape.num_parts() != 68:
+        logger.info("Landmark detection failed - could not find all 68 facial landmarks.")
+        return None
+
+    # Get head pose
+    head_pose = get_head_pose(shape, (img_width, img_height))
     if head_pose is None:
         return None
+
     pitch, yaw, roll = head_pose
     if abs(abs(pitch) - 180) > pose_threshold or abs(yaw) > pose_threshold:
         logger.info(f"Face not frontal enough: pitch={pitch:.2f}, yaw={yaw:.2f}, roll={roll:.2f}. Discarding.")
-        return None
+        # return None
+
+    # Convert landmarks to numpy array
     shape_np = np.array([(shape.part(i).x, shape.part(i).y) for i in range(68)], dtype="int")
+
+    # Calculate eye centers
     left_eye_center = shape_np[36:42].mean(axis=0).astype("int")
     right_eye_center = shape_np[42:48].mean(axis=0).astype("int")
+
+    # Calculate angle and scale
     dY = right_eye_center[1] - left_eye_center[1]
     dX = right_eye_center[0] - left_eye_center[0]
     angle = np.degrees(np.arctan2(dY, dX))
+
     eye_distance = np.linalg.norm(right_eye_center - left_eye_center)
-    desired_right_eye_x = 1.0 - desired_left_eye[0]
-    desired_eye_distance = (desired_right_eye_x - desired_left_eye[0]) * desired_face_width
+    right_eye_pos = 1.0 - left_eye_pos[0]
+    desired_eye_distance = (right_eye_pos - left_eye_pos[0]) * desired_face_width
     scale = desired_eye_distance / eye_distance
+
+    # Calculate center of eyes
     eyes_center = ((left_eye_center[0] + right_eye_center[0]) / 2.0,
                    (left_eye_center[1] + right_eye_center[1]) / 2.0)
 
+    # Create transformation matrix
     M = cv2.getRotationMatrix2D(eyes_center, angle, scale)
 
+    # Update translation component of the matrix
     tX = desired_face_width * 0.5
-    tY = desired_face_height * desired_left_eye[1]
+    tY = desired_face_height * left_eye_pos[1]
     M[0, 2] += (tX - eyes_center[0])
     M[1, 2] += (tY - eyes_center[1])
+
+    # Apply transformation
     aligned_face_np = cv2.warpAffine(
         image_np,
         M,
@@ -311,6 +331,7 @@ def align_face(image, desired_face_width, desired_face_height, desired_left_eye,
         flags=cv2.INTER_CUBIC,
         borderMode=cv2.BORDER_REPLICATE
     )
+
     return Image.fromarray(aligned_face_np)
 
 
@@ -330,8 +351,8 @@ def process_asset_worker(asset, config: ProcessConfig):
     """
     try:
         asset_id = asset['id']
-        dt = datetime.fromisoformat(asset['fileCreatedAt'].replace("Z", "+00:00"))
-        timestamp = dt.strftime("%Y%m%d_%H%M%S")
+
+
         image_bytes = download_asset(config.api_key, config.base_url, asset_id)
         image = Image.open(io.BytesIO(image_bytes))
         image = ImageOps.exif_transpose(image)
@@ -350,22 +371,31 @@ def process_asset_worker(asset, config: ProcessConfig):
         return None
     face_data = faces[0]
     cropped_face = crop_face_from_metadata(image, face_data, config.padding_percent)
+    # filename = os.path.join(config.output_folder, f"crop_{timestamp}.jpg")
+    # cropped_face.save(f"{filename}")
     face_width, face_height = cropped_face.size
     if face_width < config.min_face_width or face_height < config.min_face_height:
         logger.info(f"Face resolution too low ({face_width}x{face_height}).")
         return None
-    aligned_face = align_face(cropped_face,
-                              desired_face_width=config.resize_width,
-                              desired_face_height=config.resize_height,
-                              desired_left_eye=config.desired_left_eye,
-                              pose_threshold=config.pose_threshold)
+
+    # Pass face_data to align_face
+    aligned_face = align_face(
+        cropped_face,
+        face_data,
+        desired_face_width=config.resize_width,
+        desired_face_height=config.resize_height,
+        left_eye_pos=config.left_eye_pos,
+        pose_threshold=config.pose_threshold
+    )
+
     if aligned_face is None:
         return None
     os.makedirs(config.output_folder, exist_ok=True)
+    dt = datetime.fromisoformat(asset['fileCreatedAt'].replace("Z", "+00:00"))
+    timestamp = dt.strftime("%Y%m%d_%H%M%S")
     filename = os.path.join(config.output_folder, f"{timestamp}.jpg")
     aligned_face.save(filename)
     return filename
-
 
 
 def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None,
@@ -402,7 +432,7 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
     processed_files = []
     completed_count = 0
 
-    initializer_args = (config.face_detect_model_path, config.landmark_model_path)
+    initializer_args = (config.landmark_model_path,)
     with concurrent.futures.ProcessPoolExecutor(
             max_workers=max_workers,
             initializer=initialize_worker,
