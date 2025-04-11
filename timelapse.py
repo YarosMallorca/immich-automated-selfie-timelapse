@@ -252,7 +252,7 @@ def get_head_pose(shape, img_size):
     return pitch, yaw, roll
 
 
-def align_face(image, face_data, desired_face_width, desired_face_height, left_eye_pos, pose_threshold):
+def align_face(image, desired_face_width, desired_face_height, left_eye_pos, pose_threshold, padding_percent):
     """
     Aligns the face in the image using facial landmarks and head pose estimation.
 
@@ -263,6 +263,7 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
         desired_face_height (int): The desired output face height.
         left_eye_pos (tuple): The desired relative position of the left eye.
         pose_threshold (float): The maximum allowable head pose deviation.
+        padding_percent (float): The padding percentage used to create the crop.
 
     Returns:
         PIL.Image or None: The aligned face image if successful, otherwise None.
@@ -270,24 +271,19 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
     image_np = np.array(image)
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
 
-    # Get the original face bounding box from metadata and scale it to the cropped image
-    face_img_width = face_data.get("imageWidth")
-    face_img_height = face_data.get("imageHeight")
+    # Get the face rectangle in the cropped image coordinates
     img_width, img_height = image.size
-    scale_x = img_width / face_img_width
-    scale_y = img_height / face_img_height
+    face_width = img_width / (1 + 2 * padding_percent)
+    face_height = img_height / (1 + 2 * padding_percent)
     
-    # Calculate the face rectangle in the cropped image coordinates
-    x1 = int(face_data.get("boundingBoxX1", 0) * scale_x)
-    x2 = int(face_data.get("boundingBoxX2", 0) * scale_x)
-    y1 = int(face_data.get("boundingBoxY1", 0) * scale_y)
-    y2 = int(face_data.get("boundingBoxY2", 0) * scale_y)
-    
-    # Calculate optimal size for landmark detection (between 200-400px)
-    face_width = x2 - x1
-    face_height = y2 - y1
-    optimal_size = 300  # Target size for landmark detection
-    scale_factor = optimal_size / max(face_width, face_height)
+    # Calculate the face rectangle coordinates
+    x1 = int((img_width - face_width) / 2)
+    x2 = int(x1 + face_width)
+    y1 = int((img_height - face_height) / 2)
+    y2 = int(y1 + face_height)
+
+    optimal_size = 256  # optimal image resolution for landmark detection (between 200-400px)
+    scale_factor = optimal_size / face_width
     
     # Resize the image for landmark detection
     resized_width = int(img_width * scale_factor)
@@ -315,13 +311,8 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
     shape_np = np.array([(shape.part(i).x / scale_factor, shape.part(i).y / scale_factor) 
                         for i in range(68)], dtype="float32")
 
-    # Get head pose using the original image size and scaled-back landmarks
-    # Create a new shape object with the scaled-back coordinates
-    scaled_shape = dlib.full_object_detection(
-        dlib.rectangle(0, 0, img_width, img_height),
-        [dlib.point(int(x), int(y)) for x, y in shape_np]
-    )
-    head_pose = get_head_pose(scaled_shape, (img_width, img_height))
+
+    head_pose = get_head_pose(shape, (img_width, img_height))
     if head_pose is None:
         return None
 
@@ -348,7 +339,6 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
     eyes_center = ((left_eye_center[0] + right_eye_center[0]) / 2.0,
                    (left_eye_center[1] + right_eye_center[1]) / 2.0)
 
-
     # Create transformation matrix
     M = cv2.getRotationMatrix2D(eyes_center, angle, scale)
 
@@ -357,7 +347,6 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
     tY = desired_face_height * left_eye_pos[1]
     M[0, 2] += (tX - eyes_center[0])
     M[1, 2] += (tY - eyes_center[1])
-
 
     # Apply transformation
     aligned_face_np = cv2.warpAffine(
@@ -406,14 +395,13 @@ def process_asset_worker(asset, config: ProcessConfig):
         logger.info(f"Face resolution too low ({face_width}x{face_height}).")
         return None
 
-    # Pass face_data to align_face
     aligned_face = align_face(
         cropped_face,
-        face_data,
         desired_face_width=config.resize_width,
         desired_face_height=config.resize_height,
         left_eye_pos=config.left_eye_pos,
-        pose_threshold=config.pose_threshold
+        pose_threshold=config.pose_threshold,
+        padding_percent=config.padding_percent
     )
 
     if aligned_face is None:
@@ -424,11 +412,6 @@ def process_asset_worker(asset, config: ProcessConfig):
     filename = os.path.join(config.output_folder, f"{timestamp}.jpg")
     aligned_face.save(filename)
     return filename
-
-def draw_landmarks(image, shape_np):
-    for (x, y) in shape_np:
-        cv2.circle(image, (x, y), 2, (0, 255, 0), -1)
-    return image
 
 def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None,
                   cancel_flag=None):
