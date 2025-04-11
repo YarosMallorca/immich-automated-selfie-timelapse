@@ -308,6 +308,20 @@ def align_face(image, desired_face_width, desired_face_height, left_eye_pos, pos
     shape_np = np.array([(shape.part(i).x / scale_factor, shape.part(i).y / scale_factor) 
                         for i in range(68)], dtype="float32")
 
+    
+    # Calculate eye aspect ratios to check if eyes are open enough
+    def eye_aspect_ratio(eye):
+        v1 = np.linalg.norm(eye[1] - eye[5])
+        v2 = np.linalg.norm(eye[2] - eye[4])
+        ear = (v1 + v2) / (2.0 * h)
+        return ear
+
+    left_eye_ratio = eye_aspect_ratio(shape_np[36:42])  # Left eye landmarks
+    right_eye_ratio = eye_aspect_ratio(shape_np[42:48])  # Right eye landmarks
+    
+    ear_threshold = 0.15  # Adjust this value based on testing
+    if left_eye_ratio < ear_threshold or right_eye_ratio < ear_threshold:
+        return None
 
     head_pose = get_head_pose(shape, (img_width, img_height))
     if head_pose is None:
