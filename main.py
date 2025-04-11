@@ -4,6 +4,7 @@ import threading
 import subprocess
 from flask import Flask, request, render_template, jsonify, redirect, url_for
 from timelapse import process_faces, ProcessConfig, validate_immich_connection
+import logging
 
 app = Flask(__name__)
 
@@ -24,6 +25,13 @@ processing_thread = None
 # Global flag to signal cancellation
 cancel_requested = False
 
+class ProgressRouteFilter(logging.Filter):
+    def filter(self, record):
+        # Filter out logs containing the progress route
+        return "/progress" not in record.getMessage()
+
+log = logging.getLogger('werkzeug')
+log.addFilter(ProgressRouteFilter())
 
 def update_progress(current, total):
     """
@@ -215,13 +223,8 @@ def index():
             resize_size = int(request.form.get("resize_size", 512))
             face_resolution_threshold = int(request.form.get("face_resolution_threshold", 128))
             pose_threshold = float(request.form.get("pose_threshold", 25))
-
-            # Parse left_eye_pos tuple from form
-            left_eye_x = float(request.form.get("left_eye_x", 0.35))
-            left_eye_y = float(request.form.get("left_eye_y", 0.45))
-            left_eye_pos = (left_eye_x, left_eye_y)
-
             max_workers = int(request.form.get("max_workers", 1))
+            left_eye_pos = (0.4, 0.4)
 
             # Date ranges are optional
             date_from = request.form.get("date_from") or None

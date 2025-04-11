@@ -50,7 +50,7 @@ class ProcessConfig:
     min_face_width: int = 128
     min_face_height: int = 128
     pose_threshold: float = 25
-    left_eye_pos: tuple = (0.35, 0.45)
+    left_eye_pos: tuple = (0.4, 0.4)
     landmark_model_path: str = "shape_predictor_68_face_landmarks.dat"
 
 
@@ -275,17 +275,14 @@ def align_face(image, desired_face_width, desired_face_height, left_eye_pos, pos
     img_width, img_height = image.size
     face_width = img_width / (1 + 2 * padding_percent)
     face_height = img_height / (1 + 2 * padding_percent)
-    
-    # Calculate the face rectangle coordinates
     x1 = int((img_width - face_width) / 2)
     x2 = int(x1 + face_width)
     y1 = int((img_height - face_height) / 2)
     y2 = int(y1 + face_height)
 
+    # Resize the image for landmark detection
     optimal_size = 256  # optimal image resolution for landmark detection (between 200-400px)
     scale_factor = optimal_size / face_width
-    
-    # Resize the image for landmark detection
     resized_width = int(img_width * scale_factor)
     resized_height = int(img_height * scale_factor)
     resized_gray = cv2.resize(gray, (resized_width, resized_height))
