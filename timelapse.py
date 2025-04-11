@@ -252,14 +252,13 @@ def get_head_pose(shape, img_size):
     return pitch, yaw, roll
 
 
-
 def align_face(image, face_data, desired_face_width, desired_face_height, left_eye_pos, pose_threshold):
     """
     Aligns the face in the image using facial landmarks and head pose estimation.
 
     Args:
         image (PIL.Image): The cropped image containing just the face.
-        face_data (dict): Metadata containing face bounding box info (not used for detection).
+        face_data (dict): Metadata containing face bounding box info.
         desired_face_width (int): The desired output face width.
         desired_face_height (int): The desired output face height.
         left_eye_pos (tuple): The desired relative position of the left eye.
@@ -271,20 +270,58 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
     image_np = np.array(image)
     gray = cv2.cvtColor(image_np, cv2.COLOR_RGB2GRAY)
 
-    # Since we already have a cropped face image, create a rectangle for the whole image
-    img_height, img_width = gray.shape
-    rect = dlib.rectangle(0, 0, img_width, img_height)
+    # Get the original face bounding box from metadata and scale it to the cropped image
+    face_img_width = face_data.get("imageWidth")
+    face_img_height = face_data.get("imageHeight")
+    img_width, img_height = image.size
+    scale_x = img_width / face_img_width
+    scale_y = img_height / face_img_height
+    
+    # Calculate the face rectangle in the cropped image coordinates
+    x1 = int(face_data.get("boundingBoxX1", 0) * scale_x)
+    x2 = int(face_data.get("boundingBoxX2", 0) * scale_x)
+    y1 = int(face_data.get("boundingBoxY1", 0) * scale_y)
+    y2 = int(face_data.get("boundingBoxY2", 0) * scale_y)
+    
+    # Calculate optimal size for landmark detection (between 200-400px)
+    face_width = x2 - x1
+    face_height = y2 - y1
+    optimal_size = 300  # Target size for landmark detection
+    scale_factor = optimal_size / max(face_width, face_height)
+    
+    # Resize the image for landmark detection
+    resized_width = int(img_width * scale_factor)
+    resized_height = int(img_height * scale_factor)
+    resized_gray = cv2.resize(gray, (resized_width, resized_height))
+    
+    # Scale the face rectangle coordinates to the resized image
+    resized_x1 = int(x1 * scale_factor)
+    resized_x2 = int(x2 * scale_factor)
+    resized_y1 = int(y1 * scale_factor)
+    resized_y2 = int(y2 * scale_factor)
+    
+    # Create dlib rectangle from the scaled face bounding box
+    rect = dlib.rectangle(resized_x1, resized_y1, resized_x2, resized_y2)
 
-    # Get facial landmarks
-    shape = face_predictor(gray, rect)
+    # Get facial landmarks on the resized image
+    shape = face_predictor(resized_gray, rect)
 
     # Check if face landmarks were detected
     if shape.num_parts != 68:
         logger.info("Landmark detection failed - could not find all 68 facial landmarks.")
         return None
 
-    # Get head pose
-    head_pose = get_head_pose(shape, (img_width, img_height))
+    # Scale the landmarks back to the original image coordinates
+    shape_np = np.array([(shape.part(i).x / scale_factor, shape.part(i).y / scale_factor) 
+                        for i in range(68)], dtype="float32")
+
+    # Get head pose using the original image size and scaled-back landmarks
+    # Create a new shape object with the scaled-back coordinates
+    scaled_shape = dlib.full_object_detection(
+        dlib.rectangle(0, 0, img_width, img_height),
+        [dlib.point(int(x), int(y)) for x, y in shape_np]
+    )
+    head_pose = get_head_pose(scaled_shape, (img_width, img_height))
     if head_pose is None:
         return None
 
@@ -293,10 +330,7 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
         logger.info(f"Face not frontal enough: pitch={pitch:.2f}, yaw={yaw:.2f}, roll={roll:.2f}. Discarding.")
         # return None
 
-    # Convert landmarks to numpy array
-    shape_np = np.array([(shape.part(i).x, shape.part(i).y) for i in range(68)], dtype="int")
-
-    # Calculate eye centers
+    # Calculate eye centers using the scaled-back landmarks
     left_eye_center = shape_np[36:42].mean(axis=0).astype("int")
     right_eye_center = shape_np[42:48].mean(axis=0).astype("int")
 
@@ -314,6 +348,7 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
     eyes_center = ((left_eye_center[0] + right_eye_center[0]) / 2.0,
                    (left_eye_center[1] + right_eye_center[1]) / 2.0)
 
+
     # Create transformation matrix
     M = cv2.getRotationMatrix2D(eyes_center, angle, scale)
 
@@ -322,6 +357,7 @@ def align_face(image, face_data, desired_face_width, desired_face_height, left_e
     tY = desired_face_height * left_eye_pos[1]
     M[0, 2] += (tX - eyes_center[0])
     M[1, 2] += (tY - eyes_center[1])
+
 
     # Apply transformation
     aligned_face_np = cv2.warpAffine(
@@ -362,14 +398,8 @@ def process_asset_worker(asset, config: ProcessConfig):
         return None
 
     matching_person = next((p for p in asset.get('people', []) if p.get('id') == config.person_id), None)
-    if not matching_person:
-        logger.info("Subject not in image.")
-        return None
-    faces = matching_person.get('faces', [])
-    if not faces:
-        logger.info("No face data available.")
-        return None
-    face_data = faces[0]
+    face_data = matching_person.get('faces', [])[0]
+    
     cropped_face = crop_face_from_metadata(image, face_data, config.padding_percent)
     face_width, face_height = cropped_face.size
     if face_width < config.min_face_width or face_height < config.min_face_height:
@@ -395,6 +425,10 @@ def process_asset_worker(asset, config: ProcessConfig):
     aligned_face.save(filename)
     return filename
 
+def draw_landmarks(image, shape_np):
+    for (x, y) in shape_np:
+        cv2.circle(image, (x, y), 2, (0, 255, 0), -1)
+    return image
 
 def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None,
                   cancel_flag=None):
