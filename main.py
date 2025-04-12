@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Tuple
 from flask import Flask, jsonify, render_template, request
 from image_processing import process_faces
 from immich_api import validate_immich_connection
+from compile_timelapse import compile_timelapse
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -74,24 +75,40 @@ def check_output_folder() -> Tuple[bool, int]:
 def background_process(
     max_workers: int = 1,
     progress_callback: Callable = None,
-    cancel_flag: Callable = None
+    cancel_flag: Callable = None,
+    compile_video: bool = False,
+    framerate: int = 15
 ) -> List[str]:
-    """Process faces in the background.
+    """Process faces in the background and optionally compile a timelapse video.
     
     Args:
+        max_workers: Number of worker processes for face processing
         progress_callback: Optional callback for progress updates
         cancel_flag: Optional function to check for cancellation
-        
-    Returns:
-        List of processed file paths
+        compile_video: Whether to compile a timelapse video after processing
+        framerate: Frames per second for the output video
     """
     try:
-        return process_faces(
+        # Process faces
+        process_faces(
             config=config,
             max_workers=max_workers,
             progress_callback=progress_callback,
             cancel_flag=cancel_flag
         )
+        
+        if compile_video and not cancel_flag():
+            if progress_callback:
+                progress_callback(0, 1)  # Reset progress for video compilation
+                
+            progress_info["status"] = "compiling_video"
+            video_output_path = os.path.join(config.output_folder, "timelapse.mp4")
+            success = compile_timelapse(
+                image_folder=config.output_folder,
+                output_path=video_output_path,
+                framerate=framerate,
+                update_progress=progress_callback
+            )
 
     except Exception as e:
         logger.error(f"Error in background process: {str(e)}")
@@ -124,7 +141,7 @@ def index() -> str:
     """Handle the main page and processing requests."""
     global processing_thread, cancel_requested
 
-    result = None
+    message = None
     error = None
     warning = None
 
@@ -166,16 +183,23 @@ def index() -> str:
             # Start processing
             processing_thread = threading.Thread(
                 target=background_process,
-                args=(max_workers, update_progress, lambda: cancel_requested)    
+                kwargs={
+                    "max_workers": max_workers,
+                    "progress_callback": update_progress,
+                    "cancel_flag": lambda: cancel_requested,
+                    "compile_video": compile_video,
+                    "framerate": framerate
+                }  
             )   
             processing_thread.start()
-            result = "Processing started. Please wait and watch the progress bar below."
+            
+            message = "Processing started. Please wait and watch the progress bar below."
 
         except Exception as e:
             error = f"Error processing request: {e}"
 
     return render_template("index.html", 
-                         result=result, 
+                         message=message, 
                          error=error, 
                          warning=warning,
                          max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
