@@ -166,7 +166,7 @@
             <div class="form-group">
                 <label>
                     Person ID:
-                    <input type="text" name="person_id" required>
+                    <input type="text" name="person_id" value="{{ request.form.person_id or '' }}" required>
                 </label>
             </div>
 
@@ -175,13 +175,13 @@
                 <div class="form-group">
                     <label>
                         From Date:
-                        <input type="date" name="date_from">
+                        <input type="date" name="date_from" value="{{ request.form.date_from or '' }}">
                     </label>
                 </div>
                 <div class="form-group">
                     <label>
                         To Date:
-                        <input type="date" name="date_to">
+                        <input type="date" name="date_to" value="{{ request.form.date_to or '' }}">
                     </label>
                 </div>
             </div>
@@ -216,14 +216,14 @@
             <div class="section-header">Video Output</div>
             <div class="form-group">
                 <div class="checkbox-container">
-                    <input type="checkbox" id="do_not_compile_video" name="do_not_compile_video">
+                    <input type="checkbox" id="do_not_compile_video" name="do_not_compile_video" {% if request.form.do_not_compile_video %}checked{% endif %}>
                     <label for="do_not_compile_video">Do not compile images into a video</label>
                 </div>
             </div>
-            <div class="form-group" id="framerateGroup" style="display:none;">
+            <div class="form-group" id="framerateGroup" style="display:{% if request.form.do_not_compile_video %}none{% else %}block{% endif %};">
                 <label>
                     Frames per second:
-                    <input type="number" name="framerate" value="15" min="1">
+                    <input type="number" name="framerate" value="{{ request.form.framerate or 15 }}" min="1">
                 </label>
             </div>
 
@@ -246,6 +246,11 @@
         // Check connection status when page loads
         document.addEventListener('DOMContentLoaded', function() {
             checkConnectionStatus();
+            
+            // Toggle framerate field visibility based on checkbox
+            document.getElementById('do_not_compile_video').addEventListener('change', function() {
+                document.getElementById('framerateGroup').style.display = this.checked ? 'none' : 'block';
+            });
         });
 
         function checkConnectionStatus() {
@@ -273,11 +278,6 @@
                     document.getElementById('submitButton').disabled = true;
                 });
         }
-
-        // Toggle framerate field visibility based on checkbox
-        document.getElementById('do_not_compile_video').addEventListener('change', function() {
-            document.getElementById('framerateGroup').style.display = this.checked ? 'none' : 'block';
-        });
 
         // Cancel button
         document.getElementById('cancelButton').addEventListener('click', function() {
