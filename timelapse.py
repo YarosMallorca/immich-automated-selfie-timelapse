@@ -249,7 +249,7 @@ def get_head_pose(landmarks, image):
     return pitch, yaw, roll
 
 
-def detect_landmarks(image, face_data, max_landmark_size=300):
+def detect_landmarks(image, face_data, face_resolution_threshold):
     """
     Detects facial landmarks in the image, resizing if necessary for better detection.
 
@@ -260,7 +260,7 @@ def detect_landmarks(image, face_data, max_landmark_size=300):
 
     Returns:
         dict or None: Dictionary containing facial landmarks in numpy arrays if successful,
-                     None if detection failed.
+                     None if face resolution is too low.
     """
     # Get face rectangle from metadata with proper scaling
     face_img_width = face_data.get("imageWidth")
@@ -274,14 +274,18 @@ def detect_landmarks(image, face_data, max_landmark_size=300):
     y2 = int(face_data.get("boundingBoxY2", 0) * scale_y)
     w = x2 - x1
     h = y2 - y1
+    
+    if w < face_resolution_threshold or h < face_resolution_threshold:
+        return None
 
     # Crop the face region from the image
     face_crop = image.crop((x1, y1, x2, y2))
     
     # If the cropped face is too large, resize it for better landmark detection
+    optimal_size = 256  #  optimal size for landmark detection
     scale_factor = 1.0
-    if w > max_landmark_size or h > max_landmark_size:
-        scale_factor = max_landmark_size / max(w, h)
+    if w > optimal_size or h > optimal_size:
+        scale_factor = optimal_size / max(w, h)
         new_w = int(w * scale_factor)
         new_h = int(h * scale_factor)
         face_crop = face_crop.resize((new_w, new_h), Image.Resampling.LANCZOS)
@@ -331,7 +335,7 @@ def detect_landmarks(image, face_data, max_landmark_size=300):
     }
 
 
-def check_eye_visibility(left_eye, right_eye, ear_threshold=0.2):
+def check_eye_visibility(left_eye, right_eye, ear_threshold=0.2) -> bool:
     """
     Checks if both eyes are visible by calculating the Eye Aspect Ratio (EAR).
 
@@ -341,7 +345,7 @@ def check_eye_visibility(left_eye, right_eye, ear_threshold=0.2):
         ear_threshold (float): Threshold for eye visibility.
 
     Returns:
-        tuple: (left_ear, right_ear) if both eyes are visible, None otherwise.
+        bool: True if both eyes are open enough, False otherwise.
     """
     def calculate_ear(eye):
         v1 = np.linalg.norm(eye[1] - eye[5])
@@ -354,10 +358,9 @@ def check_eye_visibility(left_eye, right_eye, ear_threshold=0.2):
     right_ear = calculate_ear(right_eye)
 
     if left_ear < ear_threshold or right_ear < ear_threshold:
-        logger.info(f"Face turned too much to the side (EAR: L={left_ear:.2f}, R={right_ear:.2f})")
-        return None
+        return False
 
-    return left_ear, right_ear
+    return True
 
 
 def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold, pose_threshold, left_eye_pos):
@@ -376,7 +379,7 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
         PIL.Image or None: The aligned face image if successful, None otherwise.
     """
     try:
-        # Get face rectangle from metadata with proper scaling
+        # DEBUG : remove after testing
         face_img_width = face_data.get("imageWidth")
         face_img_height = face_data.get("imageHeight")
         img_width, img_height = image.size
@@ -394,14 +397,14 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
         img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
 
         # Detect landmarks in the face region
-        landmarks = detect_landmarks(image, face_data)
+        landmarks = detect_landmarks(image, face_data, face_resolution_threshold)
         if not landmarks:
-            logger.info("No facial landmarks detected")
-            draw_landmarks(img_np, None, (x1, y1, x2, y2), "discarded/no_landmarks.jpg")
+            logger.info("Face resolution is too low")
             return None
 
         # Check if both eyes are visible
         if not check_eye_visibility(landmarks['left_eye'], landmarks['right_eye']):
+            logger.info("Eyes are too closed")
             draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), "discarded/side_face.jpg")
             return None
 
