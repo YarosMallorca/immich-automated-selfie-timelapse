@@ -188,28 +188,19 @@
 
             <div class="section-header">Face Processing Settings</div>
             <div class="form-group">
-                <label>
-                    Padding added around the face in percent:
-                    <input type="number" step="1" name="padding_percent" value="{{ request.form.padding_percent or 30 }}">
-                </label>
+                <label for="resize_size">Output Image Size:</label>
+                <input type="number" step="1" name="resize_size" value="{{ request.form.resize_size or 512 }}">
+                <small class="form-text text-muted">Width and height of the output images in pixels.</small>
             </div>
             <div class="form-group">
-                <label>
-                    Output image size:
-                    <input type="number" name="resize_size" value="{{ request.form.resize_size or 512 }}">
-                </label>
+                <label for="face_resolution_threshold">Minimum Face Resolution:</label>
+                <input type="number" step="1" name="face_resolution_threshold" value="{{ request.form.face_resolution_threshold or 128 }}">
+                <small class="form-text text-muted">Minimum width/height of detected faces in pixels.</small>
             </div>
             <div class="form-group">
-                <label>
-                    Face resolution threshold:
-                    <input type="number" name="face_resolution_threshold" value="{{ request.form.face_resolution_threshold or 128 }}">
-                </label>
-            </div>
-            <div class="form-group">
-                <label>
-                    Max orientation of the face (degrees):
-                    <input type="number" step="0.1" name="pose_threshold" value="{{ request.form.pose_threshold or 25 }}">
-                </label>
+                <label for="pose_threshold">Maximum Head Pose Deviation:</label>
+                <input type="number" step="0.1" name="pose_threshold" value="{{ request.form.pose_threshold or 25 }}">
+                <small class="form-text text-muted">Maximum allowed head pose deviation in degrees.</small>
             </div>
             <div class="form-group">
                 <label>

@@ -5,6 +5,8 @@ import subprocess
 from flask import Flask, request, render_template, jsonify, redirect, url_for
 from timelapse import process_faces, ProcessConfig, validate_immich_connection
 import logging
+import uuid
+from datetime import datetime
 
 app = Flask(__name__)
 
@@ -46,98 +48,50 @@ def update_progress(current, total):
     progress_info["status"] = "running" if current < total else "done"
 
 
-def background_process(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold,
-                       left_eye_pos,
-                       max_workers, date_from, date_to, compile_video, framerate):
+def background_process(person_id, resize_size, face_resolution_threshold, pose_threshold,
+                     left_eye_pos, output_folder, api_key, base_url, progress_callback=None, cancel_flag=None):
     """
-    Background process that creates a configuration object and calls process_faces.
+    Background process to handle face alignment and timelapse creation.
 
     Args:
-        person_id (str): The target person ID.
-        padding_percent (float): Padding percentage for face cropping.
-        resize_size (int): Desired width and height for the aligned face image.
-        face_resolution_threshold (int): Minimum required face resolution.
+        person_id (str): ID of the person to process.
+        resize_size (int): Size to resize the output images to.
+        face_resolution_threshold (int): Minimum face resolution threshold.
         pose_threshold (float): Maximum allowed head pose deviation.
-        left_eye_pos (tuple): The desired relative position of the left eye.
-        max_workers (int): Number of concurrent worker processes.
-        date_from (str): Start date for asset filtering.
-        date_to (str): End date for asset filtering.
-        compile_video (bool): Whether to compile the images into a video.
-        framerate (int): Frames per second for the output video.
+        left_eye_pos (tuple): Desired position of the left eye in the output.
+        output_folder (str): Folder to save the output images.
+        api_key (str): API key for authentication.
+        base_url (str): Base URL of the API.
+        progress_callback (callable, optional): Callback for progress updates.
+        cancel_flag (callable, optional): Function to check if process should be cancelled.
     """
-    global cancel_requested
     try:
-        progress_info["status"] = "running"
-        # Build the configuration object for processing
         config = ProcessConfig(
-            api_key=API_KEY,
-            base_url=BASE_URL,
+            api_key=api_key,
+            base_url=base_url,
             person_id=person_id,
-            output_folder=OUTPUT_FOLDER,
-            padding_percent=padding_percent,
+            output_folder=output_folder,
             resize_width=resize_size,
             resize_height=resize_size,
             min_face_width=face_resolution_threshold,
             min_face_height=face_resolution_threshold,
             pose_threshold=pose_threshold,
-            left_eye_pos=left_eye_pos,
-            landmark_model_path=LANDMARK_MODEL
+            left_eye_pos=left_eye_pos
         )
 
-        processed_files = process_faces(config, max_workers=max_workers, progress_callback=update_progress,
-                                        date_from=date_from, date_to=date_to, cancel_flag=lambda: cancel_requested)
+        # Process the faces
+        processed_files = process_faces(
+            config=config,
+            max_workers=1,
+            progress_callback=progress_callback,
+            cancel_flag=cancel_flag
+        )
 
-        # Check if processing was cancelled
-        if cancel_requested:
-            progress_info["status"] = "cancelled"
-            cancel_requested = False
-            return
-
-        # Compile video if requested and there are processed files
-        if compile_video and processed_files:
-            output_video = os.path.join(OUTPUT_FOLDER, "timelapse.mp4")
-            ffmpeg_command = [
-                "ffmpeg", "-y",
-                "-framerate", str(framerate),
-                "-pattern_type", "glob",
-                "-i", os.path.join(OUTPUT_FOLDER, "*.jpg"),
-                "-c:v", "libx264",
-                "-pix_fmt", "yuv420p",
-                "-progress", "pipe:1",
-                output_video
-            ]
-            try:
-                progress_info["completed"] = 0
-                progress_info["total"] = 100
-                progress_info["status"] = "video_compiling"
-
-                process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                           universal_newlines=True)
-                for line in process.stdout:
-                    line = line.strip()
-                    if line:
-                        if line.startswith("frame="):
-                            try:
-                                parts = line.split("=")
-                                frame = int(parts[1].strip())
-                                progress_info["completed"] = min(frame, progress_info["total"])
-                            except Exception:
-                                pass
-                        if "progress=end" in line:
-                            progress_info["completed"] = progress_info["total"]
-                            break
-                process.wait()
-                if process.returncode == 0:
-                    progress_info["status"] = "video_done"
-                else:
-                    progress_info["status"] = "Video compilation failed."
-            except subprocess.CalledProcessError as e:
-                progress_info["status"] = f"Video compilation failed: {e}"
-        else:
-            progress_info["status"] = "done"
+        return processed_files
 
     except Exception as e:
-        progress_info["status"] = f"error: {e}"
+        logger.error(f"Error in background process: {str(e)}")
+        raise
 
 
 def check_output_folder():
@@ -190,6 +144,51 @@ def cancel():
         return jsonify({"success": False, "message": "No active processing to cancel."})
 
 
+@app.route("/process", methods=["POST"])
+def process():
+    """Handle the processing request."""
+    try:
+        person_id = request.form.get("person_id")
+        if not person_id:
+            return jsonify({"error": "Person ID is required"}), 400
+
+        resize_size = int(request.form.get("resize_size", 512))
+        face_resolution_threshold = int(request.form.get("face_resolution_threshold", 128))
+        pose_threshold = float(request.form.get("pose_threshold", 25))
+        left_eye_x = float(request.form.get("left_eye_x", 0.4))
+        left_eye_y = float(request.form.get("left_eye_y", 0.4))
+        left_eye_pos = (left_eye_x, left_eye_y)
+
+        # Create output folder with timestamp
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_folder = os.path.join("output", f"timelapse_{timestamp}")
+        os.makedirs(output_folder, exist_ok=True)
+
+        # Start background process
+        process_id = str(uuid.uuid4())
+        process_info = {
+            "status": "running",
+            "start_time": datetime.now().isoformat(),
+            "output_folder": output_folder
+        }
+        active_processes[process_id] = process_info
+
+        # Start the background process
+        process = multiprocessing.Process(
+            target=background_process,
+            args=(person_id, resize_size, face_resolution_threshold, pose_threshold,
+                  left_eye_pos, output_folder, API_KEY, BASE_URL)
+        )
+        process.start()
+        active_processes[process_id]["process"] = process
+
+        return jsonify({"process_id": process_id})
+
+    except Exception as e:
+        logger.error(f"Error in process route: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     """
@@ -219,12 +218,12 @@ def index():
             cancel_requested = False
 
             person_id = request.form["person_id"]
-            padding_percent = float(request.form.get("padding_percent", 30)) / 100
             resize_size = int(request.form.get("resize_size", 512))
             face_resolution_threshold = int(request.form.get("face_resolution_threshold", 128))
             pose_threshold = float(request.form.get("pose_threshold", 25))
-            max_workers = int(request.form.get("max_workers", 1))
-            left_eye_pos = (0.4, 0.4)
+            left_eye_x = float(request.form.get("left_eye_x", 0.4))
+            left_eye_y = float(request.form.get("left_eye_y", 0.4))
+            left_eye_pos = (left_eye_x, left_eye_y)
 
             # Date ranges are optional
             date_from = request.form.get("date_from") or None
@@ -242,8 +241,8 @@ def index():
             # Start the processing in a background thread
             processing_thread = threading.Thread(
                 target=background_process,
-                args=(person_id, padding_percent, resize_size, face_resolution_threshold, pose_threshold,
-                      left_eye_pos, max_workers, date_from, date_to, compile_video, framerate)
+                args=(person_id, resize_size, face_resolution_threshold, pose_threshold,
+                      left_eye_pos, OUTPUT_FOLDER, API_KEY, BASE_URL, update_progress, lambda: cancel_requested)
             )
             processing_thread.start()
             result = "Processing started. Please wait and watch the progress bar below."
