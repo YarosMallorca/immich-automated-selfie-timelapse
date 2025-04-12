@@ -116,9 +116,11 @@ def validate_immich_connection(api_key, base_url):
         return False, f"Unexpected error: {str(e)}"
 
 
-def initialize_worker(landmark_model_path):
-    """
-    Initializes the face predictor in each worker process.
+def initialize_worker(landmark_model_path: str) -> None:
+    """Initialize worker process with face predictor.
+    
+    Args:
+        landmark_model_path: Path to the landmark model file
     """
     global face_predictor
     face_predictor = dlib.shape_predictor(landmark_model_path)
@@ -558,7 +560,7 @@ def process_faces(config: AppConfig, max_workers=1, progress_callback=None, canc
     processed_files = []
     completed_count = 0
 
-    initializer_args = (config.landmark_model)
+    initializer_args = [config.landmark_model]
     with concurrent.futures.ProcessPoolExecutor(
             max_workers=max_workers,
             initializer=initialize_worker,
