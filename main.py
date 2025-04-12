@@ -2,13 +2,11 @@ import logging
 import multiprocessing
 import os
 import threading
-import uuid
 from dataclasses import dataclass
-from datetime import datetime
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Tuple
 
 from flask import Flask, jsonify, render_template, request
-from timelapse import ProcessConfig, process_faces, validate_immich_connection
+from timelapse import process_faces, validate_immich_connection
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -27,16 +25,15 @@ class AppConfig:
     """Configuration for the application."""
     api_key: str = os.environ.get("IMMICH_API_KEY", "")
     base_url: str = os.environ.get("IMMICH_BASE_URL", "")
+    person_id: str = None
     output_folder: str = "output"
-    landmark_model: str ="shape_predictor_68_face_landmarks.dat"
-    default_resize_size: int = 512
-    default_face_resolution_threshold: int = 128
-    default_pose_threshold: float = 25.0
-    default_left_eye_pos: Tuple[float, float] = (0.35, 0.4)
-    default_framerate: int = 24
-    default_date_format: str = "%Y-%m-%d"
-
-
+    landmark_model: str = "shape_predictor_68_face_landmarks.dat"
+    resize_size: int = 512
+    face_resolution_threshold: int = 128
+    pose_threshold: float = 25.0
+    left_eye_pos: Tuple[float, float] = (0.35, 0.4)
+    date_from: str = None
+    date_to: str = None
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -44,7 +41,7 @@ app = Flask(__name__)
 # Global state
 AVAILABLE_CORES = multiprocessing.cpu_count()
 progress_info: Dict[str, any] = {"completed": 0, "total": 0, "status": "idle"}
-processing_thread: Optional[threading.Thread] = None
+processing_thread: threading.Thread = None
 cancel_requested: bool = False
 config = AppConfig()
 
@@ -74,26 +71,12 @@ def check_output_folder() -> Tuple[bool, int]:
     return len(files) == 0, len(files)
 
 def background_process(
-    person_id: str,
-    resize_size: int,
-    face_resolution_threshold: int,
-    pose_threshold: float,
-    left_eye_pos: Tuple[float, float],
-    date_from: Optional[str] = None,
-    date_to: Optional[str] = None,
-    progress_callback: Optional[Callable] = None,
-    cancel_flag: Optional[Callable] = None
+    progress_callback: Callable = None,
+    cancel_flag: Callable = None
 ) -> List[str]:
     """Process faces in the background.
     
     Args:
-        person_id: ID of the person to process
-        resize_size: Size to resize output images to
-        face_resolution_threshold: Minimum face resolution threshold
-        pose_threshold: Maximum allowed head pose deviation
-        left_eye_pos: Desired position of the left eye in output
-        date_from: Optional start date in YYYY-MM-DD format
-        date_to: Optional end date in YYYY-MM-DD format
         progress_callback: Optional callback for progress updates
         cancel_flag: Optional function to check for cancellation
         
@@ -101,24 +84,8 @@ def background_process(
         List of processed file paths
     """
     try:
-        process_config = ProcessConfig(
-            api_key=config.api_key,
-            base_url=config.base_url,
-            person_id=person_id,
-            output_folder=config.output_folder,
-            resize_width=resize_size,
-            resize_height=resize_size,
-            min_face_width=face_resolution_threshold,
-            min_face_height=face_resolution_threshold,
-            pose_threshold=pose_threshold,
-            left_eye_pos=left_eye_pos,
-            landmark_model_path=config.landmark_model,
-            date_from=date_from,
-            date_to=date_to
-        )
-
         return process_faces(
-            config=process_config,
+            config=config,
             max_workers=1,
             progress_callback=progress_callback,
             cancel_flag=cancel_flag
@@ -178,20 +145,17 @@ def index() -> str:
         try:
             cancel_requested = False
 
-            # Get form data with defaults
-            person_id = request.form["person_id"]
-            resize_size = int(request.form.get("resize_size", config.default_resize_size))
-            face_resolution_threshold = int(request.form.get("face_resolution_threshold", 
-                                                          config.default_face_resolution_threshold))
-            pose_threshold = float(request.form.get("pose_threshold", config.default_pose_threshold))
-
-            # Optional date ranges
-            date_from = request.form.get("date_from") or None
-            date_to = request.form.get("date_to") or None
+            # Get form data
+            config.person_id = request.form["person_id"]
+            config.resize_size = int(request.form.get("resize_size"))
+            config.face_resolution_threshold = int(request.form.get("face_resolution_threshold"))
+            config.pose_threshold = float(request.form.get("pose_threshold"))
+            config.date_from = request.form.get("date_from")
+            config.date_to = request.form.get("date_to")
 
             # Video compilation options
             compile_video = request.form.get("compile_video") == "on"
-            framerate = int(request.form.get("framerate", config.default_framerate))
+            framerate = int(request.form.get("framerate", 15))
 
             # Reset progress info
             progress_info.update({
@@ -204,10 +168,8 @@ def index() -> str:
             # Start processing
             processing_thread = threading.Thread(
                 target=background_process,
-                args=(person_id, resize_size, face_resolution_threshold, pose_threshold,
-                      config.default_left_eye_pos, config.output_folder, date_from, date_to,
-                      update_progress, lambda: cancel_requested)
-            )
+                args=(update_progress, lambda: cancel_requested)    
+            )   
             processing_thread.start()
             result = "Processing started. Please wait and watch the progress bar below."
 

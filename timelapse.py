@@ -11,7 +11,7 @@ import cv2
 import dlib
 from tqdm import tqdm
 import logging
-
+from typing import Tuple
 
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
@@ -36,21 +36,19 @@ face_predictor = None
 
 
 @dataclass
-class ProcessConfig:
-    """
-    Dataclass to hold configuration parameters for processing assets.
-    """
+class AppConfig:
+    """Configuration for the application."""
     api_key: str
     base_url: str
     person_id: str
-    output_folder: str = "output"
-    resize_width: int = 512
-    resize_height: int = 512
-    min_face_width: int = 128
-    min_face_height: int = 128
-    pose_threshold: float = 25
-    left_eye_pos: tuple = (0.35, 0.4)
-    landmark_model_path: str = "shape_predictor_68_face_landmarks.dat"
+    output_folder: str
+    landmark_model: str
+    resize_size: int
+    face_resolution_threshold: int
+    pose_threshold: float
+    left_eye_pos: Tuple[float, float]
+    date_from: str
+    date_to: str
 
 def draw_landmarks(image, landmarks, face_rect, output_path):
     """
@@ -486,7 +484,7 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
         return None
 
 
-def process_asset_worker(asset, config: ProcessConfig):
+def process_asset_worker(asset, config: AppConfig):
     """
     Worker function to process a single asset.
 
@@ -495,14 +493,13 @@ def process_asset_worker(asset, config: ProcessConfig):
 
     Args:
         asset (dict): The asset metadata.
-        config (ProcessConfig): Configuration parameters.
+        config (AppConfig): Configuration parameters.
 
     Returns:
         str or None: The file path of the saved image if processing is successful; otherwise None.
     """
     try:
         asset_id = asset['id']
-
         image_bytes = download_asset(config.api_key, config.base_url, asset_id)
         image = Image.open(io.BytesIO(image_bytes))
         image = ImageOps.exif_transpose(image)
@@ -514,12 +511,11 @@ def process_asset_worker(asset, config: ProcessConfig):
     matching_person = next((p for p in asset.get('people', []) if p.get('id') == config.person_id), None)
     face_data = matching_person.get('faces', [])[0]
     
-
     aligned_face = crop_and_align_face(
         image,
         face_data,
-        resize_size=config.resize_width,
-        face_resolution_threshold=config.min_face_width,
+        resize_size=config.resize_size,
+        face_resolution_threshold=config.face_resolution_threshold,
         pose_threshold=config.pose_threshold,
         left_eye_pos=config.left_eye_pos
     )
@@ -527,15 +523,13 @@ def process_asset_worker(asset, config: ProcessConfig):
     if aligned_face is None:
         return None
 
-    os.makedirs(config.output_folder, exist_ok=True)
     dt = datetime.fromisoformat(asset['fileCreatedAt'].replace("Z", "+00:00"))
     timestamp = dt.strftime("%Y%m%d_%H%M%S")
     filename = os.path.join(config.output_folder, f"{timestamp}.jpg")
     aligned_face.save(filename)
     return filename
 
-def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, date_from=None, date_to=None,
-                  cancel_flag=None):
+def process_faces(config: AppConfig, max_workers=1, progress_callback=None, cancel_flag=None):
     """
     Processes assets containing the person and saves aligned face images.
 
@@ -543,23 +537,19 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
     concurrently download, crop, and align faces.
 
     Args:
-        config (ProcessConfig): Configuration parameters.
+        config (AppConfig): Configuration parameters.
         max_workers (int): Number of worker processes.
         progress_callback (callable, optional): A callback function for progress updates.
-        date_from (str, optional): Start date for filtering assets.
-        date_to (str, optional): End date for filtering assets.
         cancel_flag (callable, optional): A function that returns True if processing should be cancelled.
 
     Returns:
         list: A list of file paths of the saved images.
     """
-    os.makedirs(config.output_folder, exist_ok=True)
-
     if cancel_flag and cancel_flag():
         logger.info("Processing was cancelled.")
         return []
 
-    assets = get_assets_with_person(config.api_key, config.base_url, config.person_id, date_from, date_to)
+    assets = get_assets_with_person(config.api_key, config.base_url, config.person_id, config.date_from, config.date_to)
     logger.info(f"Found {len(assets)} assets containing the person.")
 
     total_assets = len(assets)
@@ -568,7 +558,7 @@ def process_faces(config: ProcessConfig, max_workers=1, progress_callback=None, 
     processed_files = []
     completed_count = 0
 
-    initializer_args = (config.landmark_model_path,)
+    initializer_args = (config.landmark_model)
     with concurrent.futures.ProcessPoolExecutor(
             max_workers=max_workers,
             initializer=initialize_worker,
