@@ -223,7 +223,7 @@
             <div class="form-group" id="framerateGroup" style="display:none;">
                 <label>
                     Frames per second:
-                    <input type="number" name="framerate" value="24" min="1" max="60">
+                    <input type="number" name="framerate" value="15" min="1">
                 </label>
             </div>
 
@@ -339,7 +339,7 @@
         }
 
         // Poll every 1 second
-        setInterval(fetchProgress, 1000);
+        setInterval(fetchProgress, 200);
 
         // Form submission
         document.getElementById('timelapseForm').addEventListener('submit', function() {

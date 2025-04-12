@@ -96,11 +96,11 @@ def background_process(
             progress_callback=progress_callback,
             cancel_flag=cancel_flag
         )
+
+        if progress_callback:
+                progress_callback(1, 1)
         
         if not do_not_compile_video and not cancel_flag():
-            if progress_callback:
-                progress_callback(0, 1)  # Reset progress for video compilation
-                
             progress_info["status"] = "compiling_video"
             video_output_path = os.path.join(config.output_folder, "timelapse.mp4")
             success = compile_timelapse(
@@ -179,7 +179,6 @@ def index() -> str:
                 "total": 0,
                 "status": "idle"
             })
-            progress_info.pop("video_path", None)
 
             # Start processing
             processing_thread = threading.Thread(
