@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple
 
 from flask import Flask, jsonify, render_template, request
-from timelapse import process_faces, validate_immich_connection
+from image_processing import process_faces
+from immich_api import validate_immich_connection
 
 # Configure logging
 logger = logging.getLogger(__name__)

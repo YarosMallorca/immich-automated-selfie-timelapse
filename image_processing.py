@@ -1,7 +1,6 @@
-# timelapse.py
+# image_processing.py
 import os
 import io
-import requests
 import concurrent.futures
 from datetime import datetime
 from dataclasses import dataclass
@@ -12,6 +11,7 @@ import dlib
 from tqdm import tqdm
 import logging
 from typing import Tuple
+from immich_api import get_assets_with_person, download_asset
 
 class TqdmLoggingHandler(logging.Handler):
     def __init__(self, level=logging.NOTSET):
@@ -32,8 +32,6 @@ formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s', datef
 tqdm_handler.setFormatter(formatter)
 logger.addHandler(tqdm_handler)
 
-face_predictor = None
-
 
 @dataclass
 class AppConfig:
@@ -50,71 +48,6 @@ class AppConfig:
     date_from: str
     date_to: str
 
-def draw_landmarks(image, landmarks, face_rect, output_path):
-    """
-    Draws facial landmarks and face rectangle on the image and saves it.
-
-    Args:
-        image (numpy.ndarray): The input image in BGR format.
-        landmarks (dict): Dictionary containing facial landmarks.
-        face_rect (tuple): Face rectangle coordinates (x1, y1, x2, y2).
-        output_path (str): Path to save the output image.
-    """
-    # Create a copy of the image to draw on
-    img = image.copy()
-    
-    # Draw face rectangle
-    x1, y1, x2, y2 = face_rect
-    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-    
-    # Draw landmarks if available
-    if landmarks is not None:
-        for i, (x, y) in landmarks.items():
-            cv2.circle(img, (int(x), int(y)), 2, (0, 0, 255), -1)
-    
-    # Create output directory if it doesn't exist
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    # Save the image
-    cv2.imwrite(output_path, img)
-
-def validate_immich_connection(api_key, base_url):
-    """
-    Validates that the provided Immich API key and base URL are working.
-
-    Args:
-        api_key (str): API key for authentication.
-        base_url (str): Base URL of the API.
-
-    Returns:
-        tuple: (bool, str) - (is_valid, error_message)
-    """
-    if not api_key or not base_url:
-        return False, "API key and base URL are required."
-
-    try:
-        headers = {
-            'Accept': 'application/json',
-            'x-api-key': api_key,
-        }
-        # Try a simple ping to the server via the user endpoint
-        url = f"{base_url}/server/about"
-        response = requests.get(url, headers=headers, timeout=5)
-
-        if response.status_code == 200:
-            return True, "Connection successful."
-        elif response.status_code == 401:
-            return False, "Authentication failed. Invalid API key."
-        else:
-            return False, f"Server error: Status code {response.status_code}"
-
-    except requests.exceptions.ConnectionError:
-        return False, "Connection error. Check the base URL."
-    except requests.exceptions.Timeout:
-        return False, "Connection timed out. Server might be down."
-    except Exception as e:
-        return False, f"Unexpected error: {str(e)}"
-
 
 def initialize_worker(landmark_model_path: str) -> None:
     """Initialize worker process with face predictor.
@@ -124,142 +57,6 @@ def initialize_worker(landmark_model_path: str) -> None:
     """
     global face_predictor
     face_predictor = dlib.shape_predictor(landmark_model_path)
-
-
-def get_assets_with_person(api_key, base_url, person_id, date_from=None, date_to=None):
-    """
-    Retrieve all image assets containing the specified person by querying the API.
-
-    Args:
-        api_key (str): API key for authentication.
-        base_url (str): Base URL of the API.
-        person_id (str): ID of the person to search for.
-        date_from (str, optional): Start date in ISO format (YYYY-MM-DD).
-        date_to (str, optional): End date in ISO format (YYYY-MM-DD).
-
-    Returns:
-        list: List of asset dictionaries.
-    """
-    headers = {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'x-api-key': api_key,
-    }
-    url = f"{base_url}/search/metadata"
-    all_assets = []
-    payload = {
-        "page": 1,
-        "type": "IMAGE",
-        "personIds": [person_id],
-        "withArchived": False,
-        "withDeleted": True,
-        "withExif": True,
-        "withPeople": True,
-        "withStacked": True,
-    }
-
-    if date_from:
-        payload["takenAfter"] = f"{date_from}T00:00:00.000Z"
-
-    if date_to:
-        payload["takenBefore"] = f"{date_to}T23:59:59.999Z"
-
-    while payload["page"] is not None:
-        response = requests.post(url, headers=headers, json=payload)
-        if response.status_code != 200:
-            logger.info(f"Error fetching page {payload['page']}: {response.status_code} - {response.text}")
-            break
-        data = response.json()
-        if not data:
-            break
-        all_assets.extend(data['assets']['items'])
-        logger.info(f"Fetched page {payload['page']} with {len(data['assets']['items'])} assets")
-        payload["page"] = data['assets'].get('nextPage')
-    return all_assets
-
-
-def download_asset(api_key, base_url, asset_id):
-    """
-    Downloads the original image asset from the API.
-
-    Args:
-        api_key (str): API key for authentication.
-        base_url (str): Base URL of the API.
-        asset_id (str): The asset's ID.
-
-    Returns:
-        bytes: The content of the downloaded image.
-    """
-    headers = {'x-api-key': api_key}
-    response = requests.get(f'{base_url}/assets/{asset_id}/original', headers=headers)
-    response.raise_for_status()
-    return response.content
-
-
-def get_head_pose(landmarks, image):
-    """
-    Estimates the head pose (pitch, yaw, roll) using facial landmarks.
-    Based on https://learnopencv.com/head-pose-estimation-using-opencv-and-dlib/
-
-    Args:
-        landmarks (dict): Dictionary containing facial landmarks in numpy arrays.
-        image (PIL.Image): The input image.
-
-    Returns:
-        tuple or None: (pitch, yaw, roll) in degrees if successful; otherwise None.
-    """
-    # Get image size
-    img_width, img_height = image.size
-
-    image_points = np.array([
-        landmarks['nose_tip'],
-        landmarks['chin'],
-        landmarks['left_eye'][0],
-        landmarks['right_eye'][3],
-        landmarks['left_mouth'],
-        landmarks['right_mouth']
-    ], dtype="double")
-
-    model_points = np.array([
-        (0.0, 0.0, 0.0),  # Nose tip
-        (0.0, -330.0, -65.0),  # Chin
-        (-225.0, 170.0, -135.0),  # Left eye left corner
-        (225.0, 170.0, -135.0),  # Right eye right corner
-        (-150.0, -150.0, -125.0),  # Left Mouth corner
-        (150.0, -150.0, -125.0)  # Right mouth corner
-    ])
-
-    focal_length = img_width
-    center = (img_width / 2, img_height / 2)
-    camera_matrix = np.array(
-        [[focal_length, 0, center[0]],
-         [0, focal_length, center[1]],
-         [0, 0, 1]], dtype="double"
-    )
-    dist_coeffs = np.zeros((4, 1))
-    success, rotation_vector, translation_vector = cv2.solvePnP(
-        model_points, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE
-    )
-    if not success:
-        logger.info("Head pose estimation failed in solvePnP.")
-        return None
-    rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
-    proj_matrix = np.hstack((rotation_matrix, translation_vector))
-    _, _, _, _, _, _, euler_angles = cv2.decomposeProjectionMatrix(proj_matrix)
-    pitch, yaw, roll = [float(angle) for angle in euler_angles]
-
-    # Normalize angles to be between -180 and 180 degrees
-    pitch = (pitch + 180) % 360 - 180
-    yaw = (yaw + 180) % 360 - 180
-    roll = (roll + 180) % 360 - 180
-
-    # Adjust pitch to be between -90 and 90 degrees
-    if pitch > 90:
-        pitch = 180 - pitch
-    elif pitch < -90:
-        pitch = -180 - pitch
-
-    return pitch, yaw, roll
 
 
 def detect_landmarks(image, face_data, face_resolution_threshold):
@@ -376,6 +173,72 @@ def check_eye_visibility(left_eye, right_eye, ear_threshold=0.2) -> bool:
     return True
 
 
+def get_head_pose(landmarks, image):
+    """
+    Estimates the head pose (pitch, yaw, roll) using facial landmarks.
+    Based on https://learnopencv.com/head-pose-estimation-using-opencv-and-dlib/
+
+    Args:
+        landmarks (dict): Dictionary containing facial landmarks in numpy arrays.
+        image (PIL.Image): The input image.
+
+    Returns:
+        tuple or None: (pitch, yaw, roll) in degrees if successful; otherwise None.
+    """
+    # Get image size
+    img_width, img_height = image.size
+
+    image_points = np.array([
+        landmarks['nose_tip'],
+        landmarks['chin'],
+        landmarks['left_eye'][0],
+        landmarks['right_eye'][3],
+        landmarks['left_mouth'],
+        landmarks['right_mouth']
+    ], dtype="double")
+
+    model_points = np.array([
+        (0.0, 0.0, 0.0),  # Nose tip
+        (0.0, -330.0, -65.0),  # Chin
+        (-225.0, 170.0, -135.0),  # Left eye left corner
+        (225.0, 170.0, -135.0),  # Right eye right corner
+        (-150.0, -150.0, -125.0),  # Left Mouth corner
+        (150.0, -150.0, -125.0)  # Right mouth corner
+    ])
+
+    focal_length = img_width
+    center = (img_width / 2, img_height / 2)
+    camera_matrix = np.array(
+        [[focal_length, 0, center[0]],
+         [0, focal_length, center[1]],
+         [0, 0, 1]], dtype="double"
+    )
+    dist_coeffs = np.zeros((4, 1))
+    success, rotation_vector, translation_vector = cv2.solvePnP(
+        model_points, image_points, camera_matrix, dist_coeffs, flags=cv2.SOLVEPNP_ITERATIVE
+    )
+    if not success:
+        logger.info("Head pose estimation failed in solvePnP.")
+        return None
+    rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
+    proj_matrix = np.hstack((rotation_matrix, translation_vector))
+    _, _, _, _, _, _, euler_angles = cv2.decomposeProjectionMatrix(proj_matrix)
+    pitch, yaw, roll = [float(angle) for angle in euler_angles]
+
+    # Normalize angles to be between -180 and 180 degrees
+    pitch = (pitch + 180) % 360 - 180
+    yaw = (yaw + 180) % 360 - 180
+    roll = (roll + 180) % 360 - 180
+
+    # Adjust pitch to be between -90 and 90 degrees
+    if pitch > 90:
+        pitch = 180 - pitch
+    elif pitch < -90:
+        pitch = -180 - pitch
+
+    return pitch, yaw, roll
+
+
 def calculate_eye_alignment_transform(
     left_eye_center: np.ndarray,
     right_eye_center: np.ndarray,
@@ -479,19 +342,6 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
         PIL.Image or None: The aligned face image if successful, None otherwise.
     """
     try:
-        # DEBUG : remove after testing
-        face_img_width = face_data.get("imageWidth")
-        face_img_height = face_data.get("imageHeight")
-        img_width, img_height = image.size
-        scale_x = img_width / face_img_width
-        scale_y = img_height / face_img_height
-        x1 = int(face_data.get("boundingBoxX1", 0) * scale_x)
-        x2 = int(face_data.get("boundingBoxX2", 0) * scale_x)
-        y1 = int(face_data.get("boundingBoxY1", 0) * scale_y)
-        y2 = int(face_data.get("boundingBoxY2", 0) * scale_y)
-        w = x2 - x1
-        h = y2 - y1
-
         # Convert image to numpy array for OpenCV processing
         img_np = np.array(image)
         img_np = cv2.cvtColor(img_np, cv2.COLOR_RGB2BGR)
@@ -505,21 +355,18 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
         # Check if both eyes are visible
         if not check_eye_visibility(landmarks['left_eye'], landmarks['right_eye']):
             logger.info("Eyes are too closed")
-            # draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), f"discarded/eyes_closed_{face_data.get('id')}.jpg")
             return None
 
         # Get head pose
         pose = get_head_pose(landmarks, image)
         if not pose:
             logger.info("Could not estimate head pose")
-            draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), "discarded/no_pose.jpg")
             return None
 
         # Check if head pose is within acceptable range
         pitch, yaw, roll = pose
         if  abs(yaw) > pose_threshold:
             logger.info(f"Head pose exceeds threshold: pitch={pitch:.1f}°, yaw={yaw:.1f}°, roll={roll:.1f}°")
-            draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), f"discarded/pose_yaw_{yaw:.1f}.jpg")
             return None
 
         # Get eye positions
