@@ -247,6 +247,18 @@ def get_head_pose(landmarks, image):
     proj_matrix = np.hstack((rotation_matrix, translation_vector))
     _, _, _, _, _, _, euler_angles = cv2.decomposeProjectionMatrix(proj_matrix)
     pitch, yaw, roll = [float(angle) for angle in euler_angles]
+
+    # Normalize angles to be between -180 and 180 degrees
+    pitch = (pitch + 180) % 360 - 180
+    yaw = (yaw + 180) % 360 - 180
+    roll = (roll + 180) % 360 - 180
+
+    # Adjust pitch to be between -90 and 90 degrees
+    if pitch > 90:
+        pitch = 180 - pitch
+    elif pitch < -90:
+        pitch = -180 - pitch
+
     return pitch, yaw, roll
 
 
@@ -493,7 +505,7 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
         # Check if both eyes are visible
         if not check_eye_visibility(landmarks['left_eye'], landmarks['right_eye']):
             logger.info("Eyes are too closed")
-            draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), "discarded/eyes_closed.jpg")
+            # draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), f"discarded/eyes_closed_{face_data.get('id')}.jpg")
             return None
 
         # Get head pose
@@ -505,10 +517,10 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
 
         # Check if head pose is within acceptable range
         pitch, yaw, roll = pose
-        if abs(pitch) > pose_threshold or abs(yaw) > pose_threshold or abs(roll) > pose_threshold:
+        if  abs(yaw) > pose_threshold:
             logger.info(f"Head pose exceeds threshold: pitch={pitch:.1f}°, yaw={yaw:.1f}°, roll={roll:.1f}°")
-            draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), f"discarded/pose_pitch_{pitch:.1f}_yaw_{yaw:.1f}_roll_{roll:.1f}.jpg")
-            # return None
+            draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), f"discarded/pose_yaw_{yaw:.1f}.jpg")
+            return None
 
         # Get eye positions
         left_eye_center = np.mean(landmarks['left_eye'], axis=0)

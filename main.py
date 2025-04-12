@@ -29,7 +29,7 @@ class AppConfig:
     output_folder: str = "output"
     landmark_model: str = "shape_predictor_68_face_landmarks.dat"
     resize_size: int = 512
-    face_resolution_threshold: int = 128
+    face_resolution_threshold: int = 80
     pose_threshold: float = 25.0
     left_eye_pos: Tuple[float, float] = (0.35, 0.4)
     date_from: str = None
@@ -71,6 +71,7 @@ def check_output_folder() -> Tuple[bool, int]:
     return len(files) == 0, len(files)
 
 def background_process(
+    max_workers: int = 1,
     progress_callback: Callable = None,
     cancel_flag: Callable = None
 ) -> List[str]:
@@ -86,7 +87,7 @@ def background_process(
     try:
         return process_faces(
             config=config,
-            max_workers=1,
+            max_workers=max_workers,
             progress_callback=progress_callback,
             cancel_flag=cancel_flag
         )
@@ -110,13 +111,10 @@ def check_connection() -> Dict[str, any]:
 def cancel() -> Dict[str, any]:
     """Cancel the current processing job."""
     global processing_thread, cancel_requested
-
     cancel_requested = True
-
     if processing_thread and processing_thread.is_alive():
         progress_info["status"] = "cancelled"
         return jsonify({"success": True, "message": "Processing cancelled."})
-    
     cancel_requested = False
     return jsonify({"success": False, "message": "No active processing to cancel."})
 
@@ -152,8 +150,7 @@ def index() -> str:
             config.pose_threshold = float(request.form.get("pose_threshold"))
             config.date_from = request.form.get("date_from")
             config.date_to = request.form.get("date_to")
-
-            # Video compilation options
+            max_workers = int(request.form.get("max_workers"))
             compile_video = request.form.get("compile_video") == "on"
             framerate = int(request.form.get("framerate", 15))
 
@@ -168,7 +165,7 @@ def index() -> str:
             # Start processing
             processing_thread = threading.Thread(
                 target=background_process,
-                args=(update_progress, lambda: cancel_requested)    
+                args=(max_workers, update_progress, lambda: cancel_requested)    
             )   
             processing_thread.start()
             result = "Processing started. Please wait and watch the progress bar below."
