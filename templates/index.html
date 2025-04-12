@@ -216,8 +216,8 @@
             <div class="section-header">Video Output</div>
             <div class="form-group">
                 <div class="checkbox-container">
-                    <input type="checkbox" id="compile_video" name="compile_video">
-                    <label for="compile_video">Compile timelapse into video</label>
+                    <input type="checkbox" id="do_not_compile_video" name="do_not_compile_video">
+                    <label for="do_not_compile_video">Do not compile images into a video</label>
                 </div>
             </div>
             <div class="form-group" id="framerateGroup" style="display:none;">
@@ -275,8 +275,8 @@
         }
 
         // Toggle framerate field visibility based on checkbox
-        document.getElementById('compile_video').addEventListener('change', function() {
-            document.getElementById('framerateGroup').style.display = this.checked ? 'block' : 'none';
+        document.getElementById('do_not_compile_video').addEventListener('change', function() {
+            document.getElementById('framerateGroup').style.display = this.checked ? 'none' : 'block';
         });
 
         // Cancel button
@@ -322,11 +322,10 @@
                         progressText.textContent = "Processing cancelled.";
                     } else if (data.status === "done") {
                         progressText.textContent = "Processing complete!";
+                    } else if (data.status === "compiling_video") {
+                        progressText.textContent = "Images generated, creating video";
                     } else if (data.status === "video_done") {
                         progressText.textContent = "Video compilation complete!";
-                        videoResult.style.display = "block";
-                        videoLink.href = "/output/timelapse.mp4";
-                        videoLink.textContent = "Download Timelapse Video";
                     } else if (data.status.startsWith("error:")) {
                         progressText.textContent = data.status;
                     } else if (data.total > 0) {

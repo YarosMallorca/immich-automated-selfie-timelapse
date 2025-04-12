@@ -76,7 +76,7 @@ def background_process(
     max_workers: int = 1,
     progress_callback: Callable = None,
     cancel_flag: Callable = None,
-    compile_video: bool = False,
+    do_not_compile_video: bool = False,
     framerate: int = 15
 ) -> List[str]:
     """Process faces in the background and optionally compile a timelapse video.
@@ -85,7 +85,7 @@ def background_process(
         max_workers: Number of worker processes for face processing
         progress_callback: Optional callback for progress updates
         cancel_flag: Optional function to check for cancellation
-        compile_video: Whether to compile a timelapse video after processing
+        do_not_compile_video: Whether to not compile a timelapse video after processing
         framerate: Frames per second for the output video
     """
     try:
@@ -97,7 +97,7 @@ def background_process(
             cancel_flag=cancel_flag
         )
         
-        if compile_video and not cancel_flag():
+        if not do_not_compile_video and not cancel_flag():
             if progress_callback:
                 progress_callback(0, 1)  # Reset progress for video compilation
                 
@@ -109,6 +109,7 @@ def background_process(
                 framerate=framerate,
                 update_progress=progress_callback
             )
+            progress_info["status"] = "video_done" if success else "error:Video compilation failed"
 
     except Exception as e:
         logger.error(f"Error in background process: {str(e)}")
@@ -169,7 +170,7 @@ def index() -> str:
             config.date_from = request.form.get("date_from")
             config.date_to = request.form.get("date_to")
             max_workers = int(request.form.get("max_workers"))
-            compile_video = request.form.get("compile_video") == "on"
+            do_not_compile_video = request.form.get("do_not_compile_video") == "on"
             framerate = int(request.form.get("framerate", 15))
 
             # Reset progress info
@@ -187,7 +188,7 @@ def index() -> str:
                     "max_workers": max_workers,
                     "progress_callback": update_progress,
                     "cancel_flag": lambda: cancel_requested,
-                    "compile_video": compile_video,
+                    "do_not_compile_video": do_not_compile_video,
                     "framerate": framerate
                 }  
             )   
