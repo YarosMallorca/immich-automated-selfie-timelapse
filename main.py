@@ -25,10 +25,10 @@ log.addFilter(ProgressRouteFilter())
 @dataclass
 class AppConfig:
     """Configuration for the application."""
-    api_key: str
-    base_url: str
-    output_folder: str
-    landmark_model: str
+    api_key: str = os.environ.get("IMMICH_API_KEY", "")
+    base_url: str = os.environ.get("IMMICH_BASE_URL", "")
+    output_folder: str = "output"
+    landmark_model: str ="shape_predictor_68_face_landmarks.dat"
     default_resize_size: int = 512
     default_face_resolution_threshold: int = 128
     default_pose_threshold: float = 25.0
@@ -36,13 +36,7 @@ class AppConfig:
     default_framerate: int = 24
     default_date_format: str = "%Y-%m-%d"
 
-# Initialize configuration
-config = AppConfig(
-    api_key="wHNgNvlsWiSqUWvjR2K8kK2ngToQXlMIiGwF5LkxY",
-    base_url="http://192.168.1.94:2283/api",
-    output_folder="output",
-    landmark_model="shape_predictor_68_face_landmarks.dat"
-)
+
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -52,6 +46,7 @@ AVAILABLE_CORES = multiprocessing.cpu_count()
 progress_info: Dict[str, any] = {"completed": 0, "total": 0, "status": "idle"}
 processing_thread: Optional[threading.Thread] = None
 cancel_requested: bool = False
+config = AppConfig()
 
 def update_progress(current: int, total: int) -> None:
     """Update the global progress information.
@@ -84,7 +79,6 @@ def background_process(
     face_resolution_threshold: int,
     pose_threshold: float,
     left_eye_pos: Tuple[float, float],
-    output_folder: str,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     progress_callback: Optional[Callable] = None,
@@ -98,7 +92,6 @@ def background_process(
         face_resolution_threshold: Minimum face resolution threshold
         pose_threshold: Maximum allowed head pose deviation
         left_eye_pos: Desired position of the left eye in output
-        output_folder: Folder to save output images
         date_from: Optional start date in YYYY-MM-DD format
         date_to: Optional end date in YYYY-MM-DD format
         progress_callback: Optional callback for progress updates
@@ -112,7 +105,7 @@ def background_process(
             api_key=config.api_key,
             base_url=config.base_url,
             person_id=person_id,
-            output_folder=output_folder,
+            output_folder=config.output_folder,
             resize_width=resize_size,
             resize_height=resize_size,
             min_face_width=face_resolution_threshold,
