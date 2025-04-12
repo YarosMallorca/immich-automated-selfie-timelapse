@@ -199,6 +199,7 @@ def download_asset(api_key, base_url, asset_id):
 def get_head_pose(landmarks, image):
     """
     Estimates the head pose (pitch, yaw, roll) using facial landmarks.
+    Based on https://learnopencv.com/head-pose-estimation-using-opencv-and-dlib/
 
     Args:
         landmarks (dict): Dictionary containing facial landmarks in numpy arrays.
@@ -363,6 +364,93 @@ def check_eye_visibility(left_eye, right_eye, ear_threshold=0.2) -> bool:
     return True
 
 
+def calculate_eye_alignment_transform(
+    left_eye_center: np.ndarray,
+    right_eye_center: np.ndarray,
+    output_size: int,
+    desired_left_eye_pos: Tuple[float, float]
+) -> np.ndarray:
+    """Calculate the transformation matrix to align eyes at desired positions.
+    
+    Args:
+        left_eye_center: Center coordinates of the left eye
+        right_eye_center: Center coordinates of the right eye
+        output_size: Size of the output image (width and height)
+        desired_left_eye_pos: Desired position of left eye as percentages (x, y)
+        
+    Returns:
+        np.ndarray: 2x3 transformation matrix for cv2.warpAffine
+    """
+    # Calculate the desired eye positions in the output image
+    left_eye_target = np.array([
+        output_size * desired_left_eye_pos[0],
+        output_size * desired_left_eye_pos[1]
+    ])
+    right_eye_target = np.array([
+        output_size * (1.0 - desired_left_eye_pos[0]),
+        output_size * desired_left_eye_pos[1]
+    ])
+
+    # Calculate the angle between the current eye line and the target eye line
+    current_angle = np.degrees(np.arctan2(
+        right_eye_center[1] - left_eye_center[1],
+        right_eye_center[0] - left_eye_center[0]
+    ))
+    target_angle = np.degrees(np.arctan2(
+        right_eye_target[1] - left_eye_target[1],
+        right_eye_target[0] - left_eye_target[0]
+    ))
+    rotation_angle = target_angle - current_angle
+
+    # Calculate the scale factor to match the desired eye distance
+    current_eye_distance = np.linalg.norm(right_eye_center - left_eye_center)
+    target_eye_distance = np.linalg.norm(right_eye_target - left_eye_target)
+    scale = target_eye_distance / current_eye_distance
+
+    # Create the transformation matrix
+    # First, translate to origin (center of eyes)
+    center = np.array([
+        (left_eye_center[0] + right_eye_center[0]) / 2,
+        (left_eye_center[1] + right_eye_center[1]) / 2
+    ])
+    M1 = np.array([
+        [1, 0, -center[0]],
+        [0, 1, -center[1]],
+        [0, 0, 1]
+    ])
+
+    # Then rotate
+    angle_rad = np.radians(rotation_angle)
+    M2 = np.array([
+        [np.cos(angle_rad), -np.sin(angle_rad), 0],
+        [np.sin(angle_rad), np.cos(angle_rad), 0],
+        [0, 0, 1]
+    ])
+
+    # Then scale
+    M3 = np.array([
+        [scale, 0, 0],
+        [0, scale, 0],
+        [0, 0, 1]
+    ])
+
+    # Finally, translate to target position
+    target_center = np.array([
+        (left_eye_target[0] + right_eye_target[0]) / 2,
+        (left_eye_target[1] + right_eye_target[1]) / 2
+    ])
+    M4 = np.array([
+        [1, 0, target_center[0]],
+        [0, 1, target_center[1]],
+        [0, 0, 1]
+    ])
+
+    # Combine all transformations
+    M = M4 @ M3 @ M2 @ M1
+
+    # Convert to 2x3 matrix for OpenCV
+    return M[:2, :]
+
 def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold, pose_threshold, left_eye_pos):
     """
     Aligns a face in an image by positioning the eyes at specified locations.
@@ -405,7 +493,7 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
         # Check if both eyes are visible
         if not check_eye_visibility(landmarks['left_eye'], landmarks['right_eye']):
             logger.info("Eyes are too closed")
-            draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), "discarded/side_face.jpg")
+            draw_landmarks(img_np, landmarks['all_landmarks'], (x1, y1, x2, y2), "discarded/eyes_closed.jpg")
             return None
 
         # Get head pose
@@ -423,60 +511,25 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
             # return None
 
         # Get eye positions
-        left_eye_center = np.array(np.mean(landmarks['left_eye'], axis=0))
-        right_eye_center = np.array(np.mean(landmarks['right_eye'], axis=0))
+        left_eye_center = np.mean(landmarks['left_eye'], axis=0)
+        right_eye_center = np.mean(landmarks['right_eye'], axis=0)
 
-        # Calculate the desired eye positions in the output image
-        left_eye_target = np.array([resize_size * left_eye_pos[0], resize_size * left_eye_pos[1]])
-        right_eye_target = np.array([resize_size * (1.0 - left_eye_pos[0]), resize_size * left_eye_pos[1]])
-
-        # Calculate the angle between the current eye line and the target eye line
-        current_angle = np.degrees(np.arctan2(right_eye_center[1] - left_eye_center[1],
-                                            right_eye_center[0] - left_eye_center[0]))
-        target_angle = np.degrees(np.arctan2(right_eye_target[1] - left_eye_target[1],
-                                           right_eye_target[0] - left_eye_target[0]))
-        rotation_angle = target_angle - current_angle
-
-        # Calculate the scale factor to match the desired eye distance
-        current_eye_distance = np.linalg.norm(right_eye_center - left_eye_center)
-        target_eye_distance = np.linalg.norm(right_eye_target - left_eye_target)
-        scale = target_eye_distance / current_eye_distance
-
-        # Create the transformation matrix
-        # First, translate to origin (center of eyes)
-        center = np.array([(left_eye_center[0] + right_eye_center[0]) / 2,
-                          (left_eye_center[1] + right_eye_center[1]) / 2])
-        M1 = np.array([[1, 0, -center[0]],
-                      [0, 1, -center[1]],
-                      [0, 0, 1]])
-
-        # Then rotate
-        angle_rad = np.radians(rotation_angle)
-        M2 = np.array([[np.cos(angle_rad), -np.sin(angle_rad), 0],
-                      [np.sin(angle_rad), np.cos(angle_rad), 0],
-                      [0, 0, 1]])
-
-        # Then scale
-        M3 = np.array([[scale, 0, 0],
-                      [0, scale, 0],
-                      [0, 0, 1]])
-
-        # Finally, translate to target position
-        target_center = np.array([(left_eye_target[0] + right_eye_target[0]) / 2,
-                                (left_eye_target[1] + right_eye_target[1]) / 2])
-        M4 = np.array([[1, 0, target_center[0]],
-                      [0, 1, target_center[1]],
-                      [0, 0, 1]])
-
-        # Combine all transformations
-        M = M4 @ M3 @ M2 @ M1
-
-        # Convert to 2x3 matrix for OpenCV
-        rotation_matrix = M[:2, :]
+        # Calculate transformation matrix
+        rotation_matrix = calculate_eye_alignment_transform(
+            left_eye_center,
+            right_eye_center,
+            resize_size,
+            left_eye_pos
+        )
 
         # Apply transformation
-        aligned_face = cv2.warpAffine(img_np, rotation_matrix, (resize_size, resize_size),
-                                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        aligned_face = cv2.warpAffine(
+            img_np,
+            rotation_matrix,
+            (resize_size, resize_size),
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_REPLICATE
+        )
 
         # Convert back to PIL Image
         aligned_face = cv2.cvtColor(aligned_face, cv2.COLOR_BGR2RGB)
