@@ -2,8 +2,7 @@ name: Build and Publish image to Docker Hub
 on:
   push:
     branches:
-      - docker
-      - main
+      - master
     tags:
       - 'v*'
 
