@@ -320,14 +320,18 @@
                     // Handle status messages
                     if (data.status === "cancelled") {
                         progressText.textContent = "Processing cancelled.";
+                        progressBar.value = progressBar.max;
                     } else if (data.status === "done") {
                         progressText.textContent = "Processing complete!";
+                        progressBar.value = progressBar.max;
                     } else if (data.status === "compiling_video") {
                         progressText.textContent = "Images generated, creating video";
                     } else if (data.status === "video_done") {
                         progressText.textContent = "Video compilation complete!";
+                        progressBar.value = progressBar.max;
                     } else if (data.status.startsWith("error:")) {
                         progressText.textContent = data.status;
+                        progressBar.value = progressBar.max;
                     } else if (data.total > 0) {
                         progressBar.max = data.total;
                         progressBar.value = data.completed;
