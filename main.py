@@ -10,9 +10,6 @@ from image_processing import process_faces
 from immich_api import validate_immich_connection
 from compile_timelapse import compile_timelapse
 
-# Configure logging
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Filter out progress route logs
 class ProgressRouteFilter(logging.Filter):
@@ -112,7 +109,6 @@ def background_process(
             progress_info["status"] = "video_done" if success else "error:Video compilation failed"
 
     except Exception as e:
-        logger.error(f"Error in background process: {str(e)}")
         raise
 
 @app.route("/progress")
@@ -205,4 +201,4 @@ def index() -> str:
                          max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)

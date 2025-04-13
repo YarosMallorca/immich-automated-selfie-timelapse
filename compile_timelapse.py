@@ -6,7 +6,14 @@ import shutil
 from typing import Callable
 from pathlib import Path
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 def compile_timelapse(
     image_folder: str,
@@ -40,29 +47,17 @@ def compile_timelapse(
             return False
         
         logger.info(f"Found {total_frames} images to process")
-        
-        # Create a temporary directory to hold sequential files.
-        temp_dir = tempfile.mkdtemp()
-        logger.info(f"Created temporary directory: {temp_dir}")
-        
+                
         try:
-            for idx, img in enumerate(image_files):
-                src = os.path.join(image_folder, img)
-                dst = os.path.join(temp_dir, f"{idx:06d}.jpg")
-                try:
-                    os.symlink(src, dst)
-                except (AttributeError, NotImplementedError, OSError):
-                    # Fallback to copying if symlinking is not supported.
-                    shutil.copy2(src, dst)
-            
-            input_pattern = os.path.join(temp_dir, "%06d.jpg")
+            input_pattern = os.path.join(image_folder, "*.jpg")
             cmd = [
                 "ffmpeg",
+                "-pattern_type", "glob",
                 "-framerate", str(framerate),
                 "-i", input_pattern,
                 "-c:v", "libx264",
                 "-pix_fmt", "yuv420p",
-                "-y",  # Overwrite output file if it exists
+                "-y",
                 output_path
             ]
             logger.info("Running ffmpeg command: " + " ".join(cmd))
@@ -77,6 +72,9 @@ def compile_timelapse(
             
             frame_count = 0
             for line in process.stderr:
+                if not line:
+                    break
+                print(line, end='') # Output the line to the console.
                 if "frame=" in line:
                     try:
                         frame = int(line.split("frame=")[1].split()[0])
@@ -97,8 +95,7 @@ def compile_timelapse(
                 return False
         
         finally:
-            shutil.rmtree(temp_dir)
-            logger.info(f"Removed temporary directory: {temp_dir}")
+            logger.info(f"Video created successfully")
     
     except Exception as e:
         logger.error(f"Error compiling timelapse: {str(e)}")
