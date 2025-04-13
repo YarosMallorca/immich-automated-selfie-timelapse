@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+COPY . .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
@@ -27,16 +27,8 @@ RUN apt-get update && apt-get install -y wget && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy the application code
-COPY image_processing.py .
-COPY main.py .
-COPY templates/ templates/.
-COPY compile_timelapse.py .
-COPY immich_api.py .
-
 # Create output directory
 RUN mkdir -p /app/output
-
 
 # Expose the port the app runs on
 EXPOSE 5000

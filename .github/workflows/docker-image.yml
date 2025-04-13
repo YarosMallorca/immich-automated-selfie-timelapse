@@ -14,3 +14,7 @@ jobs:
       - name: build image
         run: |
           docker build . -t arnaudcayrol/immich-selfie-timelapse:latest
+              - name: push image to docker hub
+        run: |
+          docker login -u arnaudcayrol -p ${{ secrets.DOCKERHUB_TOKEN }}
+          docker push arnaudcayrol/immich-selfie-timelapse:latest

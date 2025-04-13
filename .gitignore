@@ -3,3 +3,4 @@ dlib-19.24.99-cp312-cp312-win_amd64.whl
 mmod_human_face_detector.dat
 shape_predictor_68_face_landmarks.dat
 output/
+__pycache__/
