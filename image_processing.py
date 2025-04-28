@@ -55,6 +55,7 @@ class AppConfig:
     left_eye_pos: Tuple[float, float]
     date_from: str
     date_to: str
+    ear_threshold: float
 
 
 def initialize_worker(landmark_model_path: str) -> None:
@@ -334,7 +335,7 @@ def calculate_eye_alignment_transform(
     # Convert to 2x3 matrix for OpenCV
     return M[:2, :]
 
-def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold, pose_threshold, left_eye_pos):
+def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold, pose_threshold, left_eye_pos, ear_threshold):
     """
     Aligns a face in an image by positioning the eyes at specified locations.
 
@@ -345,6 +346,7 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
         face_resolution_threshold (int): Minimum face resolution threshold.
         pose_threshold (float): Maximum allowed head pose deviation.
         left_eye_pos (tuple): Desired position of the left eye in the output as percentages (x, y).
+        ear_threshold (float): Threshold for eye visibility.
 
     Returns:
         PIL.Image or None: The aligned face image if successful, None otherwise.
@@ -361,7 +363,7 @@ def crop_and_align_face(image, face_data, resize_size, face_resolution_threshold
             return None
 
         # Check if both eyes are visible
-        if not check_eye_visibility(landmarks['left_eye'], landmarks['right_eye']):
+        if not check_eye_visibility(landmarks['left_eye'], landmarks['right_eye'], ear_threshold):
             logger.info("Eyes are too closed")
             return None
 
@@ -443,7 +445,8 @@ def process_asset_worker(asset, config: AppConfig):
         resize_size=config.resize_size,
         face_resolution_threshold=config.face_resolution_threshold,
         pose_threshold=config.pose_threshold,
-        left_eye_pos=config.left_eye_pos
+        left_eye_pos=config.left_eye_pos,
+        ear_threshold=config.ear_threshold,
     )
 
     if aligned_face is None:
