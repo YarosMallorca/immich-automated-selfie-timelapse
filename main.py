@@ -6,7 +6,11 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple
 
+# Change to script directory
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
 from flask import Flask, jsonify, render_template, request, send_file
+from flask_socketio import SocketIO
 from image_processing import process_faces
 from immich_api import get_people, get_person_thumbnail, validate_immich_connection
 from compile_timelapse import compile_timelapse
@@ -37,6 +41,7 @@ class AppConfig:
 
 # Initialize Flask app
 app = Flask(__name__)
+socketio = SocketIO(app)
 
 # Global state
 AVAILABLE_CORES = multiprocessing.cpu_count()
@@ -46,7 +51,7 @@ cancel_requested: bool = False
 config = AppConfig()
 
 def update_progress(current: int, total: int) -> None:
-    """Update the global progress information.
+    """Update the global progress information and emit a WebSocket event.
 
     Args:
         current: Number of completed tasks
@@ -55,6 +60,9 @@ def update_progress(current: int, total: int) -> None:
     progress_info["completed"] = current
     progress_info["total"] = total
     progress_info["status"] = "running" if current < total else "done"
+
+    # Emit progress update via WebSocket
+    socketio.emit('progress_update', progress_info)
 
 def check_output_folder() -> Tuple[bool, int]:
     """Check if the output folder is empty.
@@ -113,7 +121,7 @@ def background_process(
         raise
 
 @app.route("/progress")
-def progress() -> Dict[str, any]:
+def progress() -> Dict:
     """Get current progress information."""
     return jsonify(progress_info)
 
@@ -124,7 +132,7 @@ def check_connection() -> Dict[str, any]:
     return jsonify({"valid": is_valid, "message": message})
 
 @app.route("/people")
-def retreive_people() -> Dict[str, any]:
+def people() -> Dict:
     """Get list of persons from Immich API."""
     people = get_people(config.api_key, config.base_url)
     return jsonify(people)
@@ -221,4 +229,4 @@ def index() -> str:
                          max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
 
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
