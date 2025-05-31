@@ -1,3 +1,4 @@
+from io import BytesIO
 import logging
 import multiprocessing
 import os
@@ -5,9 +6,9 @@ import threading
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_file
 from image_processing import process_faces
-from immich_api import validate_immich_connection
+from immich_api import get_people, get_person_thumbnail, validate_immich_connection
 from compile_timelapse import compile_timelapse
 
 
@@ -46,7 +47,7 @@ config = AppConfig()
 
 def update_progress(current: int, total: int) -> None:
     """Update the global progress information.
-    
+
     Args:
         current: Number of completed tasks
         total: Total number of tasks
@@ -57,7 +58,7 @@ def update_progress(current: int, total: int) -> None:
 
 def check_output_folder() -> Tuple[bool, int]:
     """Check if the output folder is empty.
-    
+
     Returns:
         Tuple containing (is_empty, file_count)
     """
@@ -65,7 +66,7 @@ def check_output_folder() -> Tuple[bool, int]:
         os.makedirs(config.output_folder, exist_ok=True)
         return True, 0
 
-    files = [f for f in os.listdir(config.output_folder) 
+    files = [f for f in os.listdir(config.output_folder)
              if os.path.isfile(os.path.join(config.output_folder, f))]
     return len(files) == 0, len(files)
 
@@ -77,7 +78,7 @@ def background_process(
     framerate: int = 15
 ) -> List[str]:
     """Process faces in the background and optionally compile a timelapse video.
-    
+
     Args:
         max_workers: Number of worker processes for face processing
         progress_callback: Optional callback for progress updates
@@ -96,7 +97,7 @@ def background_process(
 
         if progress_callback:
                 progress_callback(1, 1)
-        
+
         if not do_not_compile_video and not cancel_flag():
             progress_info["status"] = "compiling_video"
             video_output_path = os.path.join(config.output_folder, "timelapse.mp4")
@@ -121,6 +122,25 @@ def check_connection() -> Dict[str, any]:
     """Check connection to Immich server."""
     is_valid, message = validate_immich_connection(config.api_key, config.base_url)
     return jsonify({"valid": is_valid, "message": message})
+
+@app.route("/people")
+def retreive_people() -> Dict[str, any]:
+    """Get list of persons from Immich API."""
+    people = get_people(config.api_key, config.base_url)
+    return jsonify(people)
+
+@app.route("/person-thumbnail/<person_id>")
+def person_thumbnail(person_id: str):
+    """Get thumbnail for a specific person."""
+    thumbnail = get_person_thumbnail(config.api_key, config.base_url, person_id)
+    if thumbnail:
+        return send_file(
+            BytesIO(thumbnail),
+            mimetype='image/jpeg',
+            as_attachment=False,
+            download_name=f"{person_id}.jpg"
+        )
+    return jsonify({"error": "Thumbnail not found"}), 404
 
 @app.route("/cancel", methods=["POST"])
 def cancel() -> Dict[str, any]:
@@ -185,18 +205,18 @@ def index() -> str:
                     "cancel_flag": lambda: cancel_requested,
                     "do_not_compile_video": do_not_compile_video,
                     "framerate": framerate
-                }  
-            )   
+                }
+            )
             processing_thread.start()
-            
+
             message = "Processing started. Please wait and watch the progress bar below."
 
         except Exception as e:
             error = f"Error processing request: {e}"
 
-    return render_template("index.html", 
-                         message=message, 
-                         error=error, 
+    return render_template("index.html",
+                         message=message,
+                         error=error,
                          warning=warning,
                          max_workers_options=list(range(1, AVAILABLE_CORES + 1)))
 

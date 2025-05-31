@@ -41,6 +41,55 @@ def validate_immich_connection(api_key, base_url):
     except Exception as e:
         return False, f"Unexpected error: {str(e)}"
 
+def get_people(api_key, base_url):
+    """
+    Retrieve all people from the Immich API.
+
+    Args:
+        api_key (str): API key for authentication.
+        base_url (str): Base URL of the API.
+
+    Returns:
+        list: List of person dictionaries.
+    """
+    headers = {
+        'Accept': 'application/json',
+        'x-api-key': api_key,
+    }
+    url = f"{base_url}/people"
+    response = requests.get(url, headers=headers)
+
+    if response.status_code != 200:
+        logger.error(f"Error fetching persons: {response.status_code} - {response.text}")
+        return []
+
+    response_json = response.json()
+    return response_json
+
+def get_person_thumbnail(api_key, base_url, person_id):
+    """
+    Retrieve the thumbnail image for a specific person.
+
+    Args:
+        api_key (str): API key for authentication.
+        base_url (str): Base URL of the API.
+        person_id (str): ID of the person to retrieve the thumbnail for.
+
+    Returns:
+        bytes: The content of the thumbnail image.
+    """
+    headers = {
+        'Accept': 'image/jpeg',
+        'x-api-key': api_key,
+    }
+    url = f"{base_url}/people/{person_id}/thumbnail"
+    response = requests.get(url, headers=headers)
+
+    if response.status_code != 200:
+        logger.error(f"Error fetching thumbnail for person {person_id}: {response.status_code} - {response.text}")
+        return None
+
+    return response.content
 
 def get_assets_with_person(api_key, base_url, person_id, date_from=None, date_to=None):
     """
